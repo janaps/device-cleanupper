@@ -11,7 +11,7 @@
 
       1. export the project folder at -Ref with git archive
       2. run the smoke tests and the wizard self-test on that export
-      3. drop what a user does not need (the tests, this script)
+      3. drop what a user does not need (the tests, this script, .github)
       4. bundle Microsoft.Graph.Authentication into modules\ - the DCU module
          prefers that copy, so a tester does not have to install it - and
       5. check that the packaged module really loads the bundled copy
@@ -146,7 +146,7 @@ try {
     }
 
     # --- what a tester does not need ----------------------------------------
-    foreach ($p in 'modules\DCU\tests', 'Build-TestPackage.ps1', '.gitignore') {
+    foreach ($p in 'modules\DCU\tests', 'Build-TestPackage.ps1', '.gitignore', '.github') {
         $full = Join-Path $pkg $p
         if (Test-Path -LiteralPath $full) { Remove-Item -LiteralPath $full -Recurse -Force }
     }

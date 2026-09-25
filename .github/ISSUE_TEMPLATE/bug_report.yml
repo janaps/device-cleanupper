@@ -1,0 +1,70 @@
+name: Bug report
+description: Something did not work, or did something you did not expect
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **This issue is public.** Replace device names, serial numbers, account names
+        and tenant names with placeholders before you paste anything - and never paste
+        BitLocker keys or `workingset.json` as it is. A security problem goes through
+        the Security tab instead (see SECURITY.md).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Front end
+      options:
+        - Wizard (Launch.cmd)
+        - Command line (Invoke-DeviceCleanup.ps1)
+        - The DCU module directly
+    validations:
+      required: true
+  - type: dropdown
+    id: step
+    attributes:
+      label: Step
+      options:
+        - Setup / sign in
+        - 1 - Device list / look up
+        - 2 - Export
+        - 3 - Wipe
+        - 4 - Remove from Intune
+        - 5 - Remove the Autopilot registration
+        - 6 - Sync Autopilot and confirm
+        - 7 - Remove from Entra ID
+        - 8 - Final check
+        - Other / not sure
+  - type: dropdown
+    id: dryrun
+    attributes:
+      label: Dry run
+      options:
+        - "Yes - dry run"
+        - "No - real run"
+        - Not sure
+  - type: textarea
+    id: version
+    attributes:
+      label: VERSION.txt
+      description: Paste the contents of VERSION.txt from the zip (or the commit id if you run from a clone).
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log lines
+      description: The relevant lines from `logs\devicecleanupper-<date>.log` in the working folder - with tenant data replaced.
+      render: text
+  - type: input
+    id: pwsh
+    attributes:
+      label: PowerShell version
+      description: The output of `$PSVersionTable.PSVersion` in pwsh.
