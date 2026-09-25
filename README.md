@@ -218,8 +218,8 @@ Builds `dist\DeviceCleanUpper-dcu-test-1.zip` from the committed code, not the
 working folder: uncommitted edits are left out and listed. The smoke tests and
 the wizard self-test run on that export first. The zip bundles
 `Microsoft.Graph.Authentication`, so the tester only needs PowerShell 7, and
-holds `VERSION.txt` (the commit it came from) and `TESTING.md` - the tester's
-instructions: prerequisites, the admin consent, a dry-run round and a real
+holds `VERSION.txt` (the commit it came from) and `GETTING-STARTED.md` -
+installation and a guided first run: prerequisites, the admin consent, a dry-run round and a real
 round, and what to send back. `-Tag` also tags the commit, so a report maps
 back to the exact code.
 
@@ -237,7 +237,7 @@ Launch.cmd                    starts the wizard (finds pwsh)
 Start-Gui.ps1                 STA runspace host for the wizard
 Invoke-DeviceCleanup.ps1      CLI, one step per run
 Build-TestPackage.ps1         builds the zip for a test user
-TESTING.md                    the test user's instructions (goes in that zip)
+GETTING-STARTED.md            install, admin consent and a guided first run (in the zip)
 gui\MainWindow.xaml           the window
 gui\Wizard.ps1                the wizard: pages, device grid, background runner
 modules\DCU\

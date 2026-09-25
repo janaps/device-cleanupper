@@ -1,8 +1,13 @@
-# Testing the Device CleanUpper
+# Getting started with the Device CleanUpper
 
-Thank you for testing. The Device CleanUpper releases Windows devices from a
-Microsoft 365 tenant, so another tenant can take them over: it removes them
-from Intune, from Windows Autopilot and, where needed, from Entra ID.
+The Device CleanUpper releases Windows devices from a Microsoft 365 tenant, so
+another tenant can take them over: it removes them from Intune, from Windows
+Autopilot and, where needed, from Entra ID.
+
+This page takes you from the zip to a first run: what to install, the one-time
+admin consent, then two rounds - a dry run that changes nothing, and a real run
+on test devices. If someone gave you this zip to test, the two rounds are the
+test.
 
 **Everything starts as a dry run.** Until you switch that off yourself, the tool
 only reports what it *would* do and changes nothing in the tenant.
@@ -48,7 +53,7 @@ registration can only be put back with the device's hardware hash.
 
 Start **`Launch.cmd`** (double-click).
 
-| # | Do | Check |
+| # | Do | You should see |
 |---|----|-------|
 | 1 | Try **Next** before signing in. | Next is greyed out and says why. |
 | 2 | **Setup and sign in**: click **Sign in**. | Your account and tenant are shown in green. |
@@ -64,7 +69,7 @@ Start **`Launch.cmd`** (double-click).
 Untick **Dry run** in the bar at the bottom. The Run button turns **red** and
 every step asks for confirmation.
 
-| # | Do | Check |
+| # | Do | You should see |
 |---|----|-------|
 | 9 | **Step 4 - Remove from Intune.** | The devices are gone from the Intune portal. |
 | 10 | **Step 5 - Remove the Autopilot registration.** | Rows show *Deletion pending*. No sync is sent in this step. |
@@ -73,8 +78,8 @@ every step asks for confirmation.
 | 13 | **Step 7 - Entra ID** (optional): untick *Skip devices that were Autopilot registered*. Include a device whose Autopilot registration you removed yourself in the Intune portal. | That device's Entra object is deleted. A device still in Autopilot is skipped, with a message saying to run steps 5 and 6. |
 | 14 | **Step 8 - Final check.** | The handover report (CSV + text checklist) is in `exports`. |
 
-Anything else you would normally do is welcome too - odd spreadsheets, typos
-in serial numbers, a device that is not in the tenant at all.
+Testing it? Try the odd cases too - a messy spreadsheet, a typo in a serial
+number, a device that is not in the tenant at all.
 
 ---
 
@@ -89,15 +94,18 @@ workingset.json                    the device list and how far each device got
 exports\                           the export (step 2) and the handover report (step 8)
 ```
 
-## What to send back
+## Reporting a problem
 
-For each problem, or at the end of the test:
+Open an issue at <https://github.com/janaps/device-cleanupper/issues> - or, if
+someone handed you this zip to test, send it to them. Include:
 
 - what you did, what you expected and what happened instead
 - `VERSION.txt`
-- the log file of that day (`logs\devicecleanupper-<date>.log`)
-- `workingset.json`
+- the relevant lines from the log (`logs\devicecleanupper-<date>.log`)
 - a screenshot if something looked wrong
 
-The log contains device names, serial numbers and account names from your
-tenant - send it the way you would send any internal document.
+**The log and `workingset.json` hold device names, serial numbers and account
+names from your tenant.** Never post them unedited in a public issue - replace
+those values first, or share only the lines that matter. For a security
+problem, see [SECURITY.md](https://github.com/janaps/device-cleanupper/blob/main/SECURITY.md)
+instead of opening an issue.

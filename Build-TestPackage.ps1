@@ -197,7 +197,7 @@ try {
         "Built     : $(Get-Date -Format 'yyyy-MM-dd HH:mm') by $env:USERNAME"
         "Graph     : $graphLine"
         ''
-        'Start with README.md - or TESTING.md if you are testing it. When you report a problem, include this file.'
+        'Start with GETTING-STARTED.md. When you report a problem, include this file.'
     ) | Set-Content -LiteralPath (Join-Path $pkg 'VERSION.txt') -Encoding utf8
 
     New-Item -ItemType Directory -Path $OutputFolder -Force | Out-Null
@@ -212,7 +212,7 @@ finally {
 $size = [math]::Round((Get-Item -LiteralPath $zip).Length / 1MB, 1)
 Write-Host ''
 Write-Host "Done: $zip ($size MB)" -ForegroundColor Green
-Write-Host 'Before anyone signs in, a Global Administrator of their tenant has to consent once - see TESTING.md, "Before you start".'
+Write-Host 'Before anyone signs in, a Global Administrator of their tenant has to consent once - see GETTING-STARTED.md, "Before you start".'
 
 [pscustomobject]@{
     Zip         = $zip
