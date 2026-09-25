@@ -26,7 +26,7 @@
     steps can be run one at a time, hours apart.
 
 .EXAMPLE
-    .\Invoke-DeviceCleanup.ps1 -Step DeviceInput -Path C:\lijsten\uitdienst.xlsx
+    .\Invoke-DeviceCleanup.ps1 -Step DeviceInput -Path C:\lists\leavers.xlsx
     # read the list, then look it up:
     .\Invoke-DeviceCleanup.ps1 -Step Lookup
 

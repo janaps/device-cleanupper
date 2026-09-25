@@ -143,7 +143,7 @@ run one at a time, hours apart.
 
 ```powershell
 # 1a. read the list
-.\Invoke-DeviceCleanup.ps1 -Step DeviceInput -Path C:\lijsten\uitdienst.xlsx
+.\Invoke-DeviceCleanup.ps1 -Step DeviceInput -Path C:\lists\leavers.xlsx
 
 # 1b. look them up (also signs you in)
 .\Invoke-DeviceCleanup.ps1 -Step Lookup

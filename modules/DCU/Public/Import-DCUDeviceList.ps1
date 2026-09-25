@@ -34,7 +34,7 @@ function Import-DCUDeviceList {
             Columns } where Rows is the normalised device list. Duplicates are
             removed - the same laptop listed twice must not be deleted twice.
         .EXAMPLE
-            Import-DCUDeviceList -Path .\uitdienst.xlsx -Sheet 'Laptops'
+            Import-DCUDeviceList -Path .\leavers.xlsx -Sheet 'Laptops'
         .EXAMPLE
             Import-DCUDeviceList -Text (Get-Clipboard -Raw)
     #>
