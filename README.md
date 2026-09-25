@@ -1,5 +1,9 @@
 # Device CleanUpper
 
+[![Tests](https://github.com/janaps/device-cleanupper/actions/workflows/tests.yml/badge.svg)](https://github.com/janaps/device-cleanupper/actions/workflows/tests.yml)
+[![Latest release](https://img.shields.io/github/v/release/janaps/device-cleanupper)](https://github.com/janaps/device-cleanupper/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/janaps/device-cleanupper)](LICENSE)
+
 Releases Windows devices from a Microsoft 365 tenant so that another tenant can
 take them over - for example when laptops move to another school, company or
 department with its own tenant. It removes the devices from **Intune**, from
@@ -7,16 +11,28 @@ department with its own tenant. It removes the devices from **Intune**, from
 avoids stuck enrollments, and proves at the end that the serial numbers are
 really released.
 
-One engine (`modules\DCU`), two front ends: a **wizard** (`Launch.cmd`) and a
-**command line** (`Invoke-DeviceCleanup.ps1`). A core module with pluggable log /
-progress / cancel sinks, a session object instead of `param()` + `Read-Host`,
-and a WPF window on an STA runspace with the work running in a background
-runspace.
+A **wizard** (`Launch.cmd`) for doing it by hand and a **command line**
+(`Invoke-DeviceCleanup.ps1`) for scripting it, both on one PowerShell module.
 
 > **Deleting a Windows Autopilot registration cannot be undone** - the device
 > has to be re-registered from its hardware hash. Every run is a dry run until
 > you switch that off, and you use this tool at your own risk (see
 > [LICENSE](LICENSE)).
+
+## Quick start
+
+1. Install [PowerShell 7](https://aka.ms/powershell-release?tag=stable)
+   (`winget install --id Microsoft.PowerShell -e`) and the one Graph module it
+   needs: `Install-Module Microsoft.Graph.Authentication -Scope CurrentUser`
+2. Download `DeviceCleanUpper-<version>.zip` from the
+   [latest release](https://github.com/janaps/device-cleanupper/releases/latest).
+   Right-click it → **Properties** → tick **Unblock**, then extract it.
+3. Once per tenant, a Global Administrator gives [admin consent](#admin-consent).
+4. Start **`Launch.cmd`**, sign in, and put your devices on the list. Nothing
+   changes in the tenant until you untick **Dry run**.
+
+[GETTING-STARTED.md](GETTING-STARTED.md) walks you through a first dry run and a
+first real run, step by step.
 
 ## The two things to know before you start
 
@@ -94,13 +110,24 @@ delete lands in the tenant audit log under your own name.
 
 Scopes are requested per feature:
 
-| Always | `DeviceManagementManagedDevices.ReadWrite.All`, `DeviceManagementServiceConfig.ReadWrite.All`, `Device.ReadWrite.All`, `Directory.Read.All` |
+| When | Scopes |
 |---|---|
+| Always | `DeviceManagementManagedDevices.ReadWrite.All`, `DeviceManagementServiceConfig.ReadWrite.All`, `Device.ReadWrite.All`, `Directory.Read.All` |
 | Only when you tick "wiping devices" | `DeviceManagementManagedDevices.PrivilegedOperations.All` |
 | Only when you tick "BitLocker keys" | `BitLockerKey.Read.All` |
 
 The two sensitive ones are opt-in so the everyday sign-in asks for less. Change
 a tick after signing in and you have to sign in again.
+
+### Admin consent
+
+The sign-in goes through Microsoft's own **Microsoft Graph Command Line Tools**
+app, and these permissions need a Global Administrator's approval once per
+tenant - until then everyone gets *"Need admin approval"*. The simplest way:
+the Global Administrator starts the wizard, ticks both boxes under **Extra
+permissions to ask for** on the Setup page, clicks **Sign in**, and ticks
+**Consent on behalf of your organization** in the Microsoft window. That covers
+every scope above, so nobody has to come back for the optional ones.
 
 ## The wizard
 
@@ -189,65 +216,17 @@ Useful switches:
   the device needs its hardware hash. That is what step 2 and the dry run are
   for.
 
-## Tests
+## Contributing
 
-```powershell
-pwsh -File .\modules\DCU\tests\Run-SmokeTests.ps1
-```
+Bug reports and ideas are welcome as
+[issues](https://github.com/janaps/device-cleanupper/issues) - but read the
+note in the form first: an issue is public, so tenant data has to come out of
+anything you paste. Security problems go through [SECURITY.md](SECURITY.md).
 
-54 checks - input parsing (CSV, Excel, paste, typed), device matching, the
-recent-activity flag, the step catalogue, the export and working-set round trip,
-the action loop's dry-run and failure behaviour, and the destructive steps run
-for real against a fake Graph (the Autopilot delete / sync / confirm flow and
-the Entra step's Autopilot check). No tenant, no sign-in.
+How the code is organised, how to run the tests and how to build a release zip
+are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-The wizard has its own self-test that builds the window, walks every page and
-prints what it found:
+## License
 
-```powershell
-$env:DCU_WIZARD_SELFTEST = '1'; .\Start-Gui.ps1; $env:DCU_WIZARD_SELFTEST = $null
-```
-
-## Handing it to a tester
-
-```powershell
-.\Build-TestPackage.ps1 -Tag dcu-test-1
-```
-
-Builds `dist\DeviceCleanUpper-dcu-test-1.zip` from the committed code, not the
-working folder: uncommitted edits are left out and listed. The smoke tests and
-the wizard self-test run on that export first. The zip bundles
-`Microsoft.Graph.Authentication`, so the tester only needs PowerShell 7, and
-holds `VERSION.txt` (the commit it came from) and `GETTING-STARTED.md` -
-installation and a guided first run: prerequisites, the admin consent, a dry-run round and a real
-round, and what to send back. `-Tag` also tags the commit, so a report maps
-back to the exact code.
-
-For a **public release** download, leave the Graph module out - it is
-Microsoft's, not this project's to redistribute:
-
-```powershell
-.\Build-TestPackage.ps1 -Tag v1.0.0 -NoGraphModule
-```
-
-## Layout
-
-```
-Launch.cmd                    starts the wizard (finds pwsh)
-Start-Gui.ps1                 STA runspace host for the wizard
-Invoke-DeviceCleanup.ps1      CLI, one step per run
-Build-TestPackage.ps1         builds the zip for a test user
-GETTING-STARTED.md            install, admin consent and a guided first run (in the zip)
-gui\MainWindow.xaml           the window
-gui\Wizard.ps1                the wizard: pages, device grid, background runner
-modules\DCU\
-  Private\Logging.ps1         Write-DCULog / Write-DCUProgress / cancel token
-  Private\Context.ps1         per-run context (dry run, recent days, folders)
-  Private\Auth.ps1            delegated sign-in + the scope sets
-  Private\Graph.ps1           Invoke-MgGraphRequest wrappers, paging, retry
-  Private\Devices.ps1         the device record and the matching logic
-  Private\Spreadsheet.ps1     CSV + a dependency-free .xlsx reader
-  Private\Steps.ps1           the step catalogue (options, help, defaults)
-  Public\...                  New-DCUSession, the nine steps, exports
-  tests\Run-SmokeTests.ps1
-```
+[MIT](LICENSE) - © 2026 Jan Aps. Microsoft Graph, Intune, Windows Autopilot and
+Entra ID are Microsoft products; this project is not affiliated with Microsoft.
