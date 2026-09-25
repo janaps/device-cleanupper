@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- The zip's `TESTING.md` is now `GETTING-STARTED.md`, written for anyone who
+  downloads a release, with how to report a problem without posting tenant data.
+- README: a quick start and an admin consent section. New: `CONTRIBUTING.md`,
+  `SECURITY.md` (private vulnerability reporting), issue forms, and the smoke
+  tests on GitHub Actions.
 ## 1.0.0 - 2026-09-25
 
 First public release.
