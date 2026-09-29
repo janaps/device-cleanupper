@@ -14,7 +14,10 @@ $script:LogSink      = $null   # scriptblock param($entry)
 $script:ProgressSink = $null   # scriptblock param($progress)
 $script:CancelToken  = $null   # [ref] to a [bool]; $true means "cancel requested"
 $script:VerboseLog   = $false  # include Verbose-level entries in the default sink
-$script:AuditFailedFor = $null # the audit file a write failure was already reported for
+# where audit lines go when the working folder's log cannot be written
+$script:AuditFallbackDir = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'DeviceCleanUpper\logs'
+$script:AuditNowhere     = $false   # the last line could not be written anywhere
+$script:AuditReported    = @{}      # audit problems the host was already told about
 
 function Write-DCULog {
     [CmdletBinding()]
@@ -113,23 +116,69 @@ function Write-DCUAuditLine {
         Append one log line to <WorkFolder>\logs\devicecleanupper-<date>.log.
         This tool deletes things: the audit trail is written even when the GUI
         is closed mid-run, so it is a plain append with no buffering.
+
+        When that file cannot be written (the folder moved, OneDrive in the
+        way, no permission, disk full), the lines go to a fallback in
+        %LOCALAPPDATA%\DeviceCleanUpper\logs instead, and the host is told
+        once where they went. When neither can be written, the host is told
+        that too, and Test-DCUAuditLog reports it: Invoke-DCUStep then refuses
+        a run that would change the tenant. Dry runs are never refused.
     #>
     param($Entry)
     if (-not $script:AuditFile) { return }
-    try {
-        $line = "{0:yyyy-MM-dd HH:mm:ss}`t{1}`t{2}`t{3}" -f $Entry.Timestamp, $Entry.Level, $Entry.Category, ($Entry.Message -replace "`r?`n", ' ')
-        Add-Content -LiteralPath $script:AuditFile -Value $line -Encoding UTF8 -ErrorAction Stop
-    }
-    catch {
-        # a missing audit trail must not go unnoticed - but say it once per
-        # file, and not through Write-DCULog, which would land back here
-        if ($script:AuditFailedFor -eq $script:AuditFile) { return }
-        $script:AuditFailedFor = $script:AuditFile
-        $warn = [pscustomobject]@{
-            Timestamp = Get-Date; Level = 'Warn'; Category = 'Audit'
-            Message   = "The audit log $($script:AuditFile) cannot be written ($($_.Exception.Message)). From here on, log lines are NOT kept on disk - fix the working folder before running anything for real."
+    $line = "{0:yyyy-MM-dd HH:mm:ss}`t{1}`t{2}`t{3}" -f $Entry.Timestamp, $Entry.Level, $Entry.Category, ($Entry.Message -replace "`r?`n", ' ')
+
+    $err = Add-DCUAuditText $script:AuditFile $line
+    if (-not $err) { $script:AuditNowhere = $false; return }
+
+    $failed   = $script:AuditFile
+    $fallback = Join-Path $script:AuditFallbackDir ('devicecleanupper-{0:yyyy-MM-dd}.log' -f (Get-Date))
+    if ($failed -ne $fallback) {
+        $note = "{0:yyyy-MM-dd HH:mm:ss}`tWarn`tAudit`tThe audit log {1} could not be written ({2}) - continuing here." -f (Get-Date), $failed, $err
+        if (-not (Add-DCUAuditText $fallback "$note`r`n$line" -CreateFolder)) {
+            $script:AuditFile = $fallback
+            $script:AuditNowhere = $false
+            Send-DCUAuditNotice $failed ("The audit log $failed cannot be written ($err). " +
+                "Log lines now go to $fallback instead - move them to the working folder once it is fixed.")
+            return
         }
-        if ($script:LogSink) { try { & $script:LogSink $warn } catch { } }
-        else { Microsoft.PowerShell.Utility\Write-Host ("{0:HH:mm:ss} [!] {1}" -f $warn.Timestamp, $warn.Message) -ForegroundColor Yellow }
     }
+    $script:AuditNowhere = $true
+    Send-DCUAuditNotice '<nowhere>' ("The audit log cannot be written - not to $failed ($err), and not to the fallback in $($script:AuditFallbackDir) either. " +
+        'Log lines are NOT kept on disk, and runs that change the tenant are refused until one of the two can be written. Dry runs still work.')
+}
+
+function Add-DCUAuditText {
+    <# Append to a log file; '' when it worked, the reason when it did not. #>
+    param([string]$Path, [string]$Text, [switch]$CreateFolder)
+    try {
+        if ($CreateFolder) {
+            $dir = Split-Path -Parent $Path
+            if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force -ErrorAction Stop | Out-Null }
+        }
+        Add-Content -LiteralPath $Path -Value $Text -Encoding UTF8 -ErrorAction Stop
+        ''
+    }
+    catch { $_.Exception.Message }
+}
+
+function Send-DCUAuditNotice {
+    <# Tell the host about the audit log - once per problem, and not through Write-DCULog, which would land back here. #>
+    param([string]$Key, [string]$Message)
+    if ($script:AuditReported.ContainsKey($Key)) { return }
+    $script:AuditReported[$Key] = $true
+    $warn = [pscustomobject]@{ Timestamp = Get-Date; Level = 'Warn'; Category = 'Audit'; Message = $Message }
+    if ($script:LogSink) { try { & $script:LogSink $warn } catch { } }
+    else { Microsoft.PowerShell.Utility\Write-Host ("{0:HH:mm:ss} [!] {1}" -f $warn.Timestamp, $warn.Message) -ForegroundColor Yellow }
+}
+
+function Test-DCUAuditLog {
+    <#
+        Whether audit lines are being kept on disk right now. It writes the
+        line it is given first, so the answer is about this moment, not about
+        the last time something was logged.
+    #>
+    param([Parameter(Mandatory)][string]$Message, [string]$Category = 'Audit')
+    Write-DCULog -Level Info -Category $Category -Message $Message
+    [bool]$script:AuditFile -and -not $script:AuditNowhere
 }

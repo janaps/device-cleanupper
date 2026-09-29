@@ -297,23 +297,78 @@ Check 'settings: a missing file gives the defaults, an unreadable one says so' {
 }
 
 # --- audit trail -------------------------------------------------------------------
-Check 'an audit log that cannot be written is reported once, not swallowed' {
-    $got = & $mod {
-        param($work)
+function AuditCase {
+    <#
+        Run $Block inside the module with the working folder's log made
+        unwritable (its 'logs' is a file), and the fallback either writable
+        or not. Returns what the log sink got, the block's result and the
+        Graph calls made.
+    #>
+    param([switch]$FallbackBroken, [scriptblock]$Block)
+    $work = Join-Path $tmp ('audit-' + [guid]::NewGuid().ToString('N').Substring(0, 6))
+    New-Item -ItemType Directory $work | Out-Null
+    Set-Content (Join-Path $work 'logs') 'a file where the logs folder should be'
+    $fallback = if ($FallbackBroken) { Join-Path $work 'logs\fallback' } else { Join-Path $work 'fallback-logs' }
+    & $mod {
+        param($work, $fallback, $block, $rows)
         $lines = [System.Collections.Generic.List[object]]::new()
-        $savedFile = $script:AuditFile
+        $saved = @{ Dir = $script:AuditFallbackDir; Graph = ${function:Invoke-DCUGraph}; Auth = ${function:Assert-DCUSignedIn} }
+        $script:fakeCalls = [System.Collections.Generic.List[string]]::new()
         try {
-            $script:AuditFile = Join-Path $work 'no-such-folder\audit.log'
-            $script:AuditFailedFor = $null
+            $script:AuditFallbackDir = $fallback
+            $script:AuditReported = @{}
+            ${function:script:Invoke-DCUGraph} = { param([string]$Uri, [string]$Method = 'GET') $script:fakeCalls.Add("$Method $Uri"); [pscustomobject]@{ id = 'fake' } }
+            ${function:script:Assert-DCUSignedIn} = { [pscustomobject]@{ SignedIn = $true; TenantDomain = 'contoso.onmicrosoft.com'; TenantId = 'tid' } }
             Register-DCULogSink { param($e) $lines.Add($e) }
-            Write-DCULog 'first'
-            Write-DCULog 'second'
-            @($lines)
+            # the block was written outside the module - bind it in, or the private functions are not found
+            $inside = $ExecutionContext.SessionState.Module.NewBoundScriptBlock($block)
+            $result = try { & $inside $work $rows } catch { "THROWN: $($_.Exception.Message)" }
+            [pscustomobject]@{ Lines = @($lines); Result = $result; Calls = @($script:fakeCalls); Fallback = $fallback }
         }
-        finally { $script:AuditFile = $savedFile; Clear-DCUSinks }
-    } $tmp
-    $audit = @($got | Where-Object Category -eq 'Audit')
-    ($audit.Count -eq 1) -and ($audit[0].Level -eq 'Warn') -and (@($got).Count -eq 3)
+        finally {
+            $script:AuditFallbackDir = $saved.Dir; $script:AuditReported = @{}; $script:AuditNowhere = $false
+            ${function:script:Invoke-DCUGraph} = $saved.Graph; ${function:script:Assert-DCUSignedIn} = $saved.Auth
+            Clear-DCUSinks
+        }
+    } $work $fallback $Block (WfRows)
+}
+
+Check 'audit: a working folder log that cannot be written falls back, and says so once' {
+    $r = AuditCase -Block { param($work) Initialize-DCUContext -Session (New-DCUSession -WorkFolder $work); Write-DCULog 'first'; Write-DCULog 'second' }
+    $notice = @($r.Lines | Where-Object Category -eq 'Audit')
+    $file = Get-ChildItem $r.Fallback -Filter '*.log' | Select-Object -First 1
+    $text = if ($file) { Get-Content $file.FullName -Raw } else { '' }
+    ($notice.Count -eq 1) -and ($notice[0].Message -like '*now go to*') -and ($text -like '*first*') -and ($text -like '*second*') -and
+    ($text -like '*could not be written*')
+}
+
+Check 'audit: when neither log can be written, a real run changes nothing' {
+    $r = AuditCase -FallbackBroken -Block {
+        param($work, $rows)
+        $key = (Resolve-DCURunPlan -Step IntuneDelete -Devices $rows -Selection 'S:5CD1111AAA' -DryRun $false).ConfirmationKey
+        Invoke-DCUStep -Step IntuneDelete -Session (New-DCUSession -WorkFolder $work -DryRun:$false) -Devices $rows -Selection 'S:5CD1111AAA' -ConfirmationKey $key -NoSave
+    }
+    $notice = @($r.Lines | Where-Object Category -eq 'Audit')
+    ($r.Result -like 'THROWN:*audit log cannot be written*') -and ($r.Calls.Count -eq 0) -and ($notice.Count -eq 1) -and ($notice[0].Message -like '*NOT kept*')
+}
+
+Check 'audit: when neither log can be written, a dry run still runs' {
+    $r = AuditCase -FallbackBroken -Block {
+        param($work, $rows)
+        Invoke-DCUStep -Step IntuneDelete -Session (New-DCUSession -WorkFolder $work) -Devices $rows -Selection 'S:5CD1111AAA' -NoSave
+    }
+    (@($r.Result.Rows | Where-Object Key -eq 'S:5CD1111AAA')[0].Outcome -eq 'Simulated') -and ($r.Calls.Count -eq 0)
+}
+
+Check 'audit: with the fallback working, a real run goes ahead and is on record there' {
+    $r = AuditCase -Block {
+        param($work, $rows)
+        $key = (Resolve-DCURunPlan -Step IntuneDelete -Devices $rows -Selection 'S:5CD1111AAA' -DryRun $false).ConfirmationKey
+        Invoke-DCUStep -Step IntuneDelete -Session (New-DCUSession -WorkFolder $work -DryRun:$false) -Devices $rows -Selection 'S:5CD1111AAA' -ConfirmationKey $key -NoSave
+    }
+    $text = Get-Content (Get-ChildItem $r.Fallback -Filter '*.log' | Select-Object -First 1).FullName -Raw
+    ($r.Calls -contains 'DELETE v1.0/deviceManagement/managedDevices/i-1') -and ($text -like '*starting for real on 1 device(s) - S:5CD1111AAA*') -and
+    ($text -like '*removed from Intune*')
 }
 
 # --- copies that must not drift apart ------------------------------------------------

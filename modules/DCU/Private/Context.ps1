@@ -42,10 +42,16 @@ function Initialize-DCUContext {
     $script:StepOptions = if ($Session.StepOptions) { $Session.StepOptions } else { @{} }
 
     if ($script:WorkFolder) {
-        foreach ($sub in @('', 'logs', 'exports')) {
-            $p = if ($sub) { Join-Path $script:WorkFolder $sub } else { $script:WorkFolder }
-            if (-not (Test-Path -LiteralPath $p)) { New-Item -ItemType Directory -Path $p -Force | Out-Null }
+        if (-not (Test-Path -LiteralPath $script:WorkFolder)) { New-Item -ItemType Directory -Path $script:WorkFolder -Force | Out-Null }
+        # not fatal here: a logs folder that cannot be made sends the audit
+        # lines to the fallback (Write-DCUAuditLine), and an exports folder is
+        # made - loudly - when something is exported (Get-DCUExportFolder)
+        foreach ($sub in 'logs', 'exports') {
+            $p = Join-Path $script:WorkFolder $sub
+            if (-not (Test-Path -LiteralPath $p)) { try { New-Item -ItemType Directory -Path $p -Force -ErrorAction Stop | Out-Null } catch { } }
         }
+        # every run tries the working folder's log first again, so a fixed
+        # folder is picked up without a restart
         $script:AuditFile = Join-Path $script:WorkFolder ('logs\devicecleanupper-{0:yyyy-MM-dd}.log' -f (Get-Date))
     }
     else {

@@ -73,6 +73,16 @@ function Invoke-DCUStep {
                 "(signed in to $name)$(if ($typed) { " - '$typed' is not this tenant" }). Nothing was changed.")
         }
     }
+    if ($plan.ChangesTenant) {
+        # a run that changes the tenant must leave a local record: the line
+        # below goes to the working folder's log or its fallback, and if
+        # neither can be written the run does not start (a dry run always may)
+        Initialize-DCUContext -Session $Session
+        $what = "$($plan.Name): starting for real on $($plan.TargetCount) device(s) - $(@($plan.Targets) -join ', ')"
+        if (-not (Test-DCUAuditLog -Message $what -Category 'Run')) {
+            throw "$(Get-DCUStepRef $Step) was not run: the audit log cannot be written - not in the working folder and not in the fallback folder. Nothing was changed. Fix the folder (or free disk space) and run it again; a dry run still works."
+        }
+    }
     if ($plan.UnknownKeys.Count) {
         Write-DCULog -Level Warn -Message "These selected keys are not in the device list and were skipped: $($plan.UnknownKeys -join ', ')"
     }
