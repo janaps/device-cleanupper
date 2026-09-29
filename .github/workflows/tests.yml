@@ -35,6 +35,19 @@ jobs:
           if ($bad) { exit 1 }
           'All files parse.'
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Parse the web page scripts
+        shell: pwsh
+        run: |
+          foreach ($f in Get-ChildItem web/static/*.js) {
+              node --check $f.FullName
+              if ($LASTEXITCODE) { Write-Host "::error file=$($f.FullName)::does not parse"; exit 1 }
+          }
+          'All page scripts parse.'
+
       - name: Smoke tests (no tenant, no sign-in)
         shell: pwsh
         run: ./modules/DCU/tests/Run-SmokeTests.ps1

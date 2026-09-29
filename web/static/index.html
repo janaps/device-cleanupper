@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Device CleanUpper</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to the step</a>
+
+  <header class="topbar" id="topbar">
+    <div class="brand">Device CleanUpper</div>
+    <div class="topbar-busy" id="busy" hidden></div>
+    <div class="topbar-right">
+      <div class="tenant" id="tenant"></div>
+      <button type="button" class="mode" id="mode" role="switch" aria-checked="true"></button>
+      <button type="button" class="btn btn-quiet" id="quit">Quit</button>
+    </div>
+  </header>
+
+  <div class="layout" id="layout">
+    <nav class="stepper" id="stepper" aria-label="Steps"></nav>
+    <main class="main" id="main" tabindex="-1">
+      <p class="loading">Loading…</p>
+    </main>
+  </div>
+
+  <div class="sr-only" id="announce" role="status" aria-live="polite"></div>
+  <div class="toasts" id="toasts" aria-live="assertive"></div>
+  <dialog class="dialog" id="dialog"></dialog>
+
+  <script type="module" src="/static/app.js"></script>
+</body>
+</html>

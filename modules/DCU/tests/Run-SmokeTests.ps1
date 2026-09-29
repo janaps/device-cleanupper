@@ -511,6 +511,8 @@ try {
 
     # navigation gating, run plans, confirmation, settings, drift between copies
     . (Join-Path $PSScriptRoot 'WorkflowChecks.ps1')
+    # the local web host: request checks, what it refuses, and one real HTTP round trip
+    . (Join-Path $PSScriptRoot 'WebChecks.ps1')
 }
 finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
