@@ -78,6 +78,10 @@ param(
 
     [string]$TenantId,
 
+    # A real destructive run on 10 or more devices also needs the tenant's
+    # domain (or id) typed here - it is checked against the actual sign-in.
+    [string]$ConfirmTenant,
+
     [switch]$UseDeviceCode,
     [switch]$ShowVerbose
 )
@@ -203,6 +207,10 @@ if ($plan.RequiresConfirmation) {
         Write-Host "  $($plan.NotBackedUp) of them were never exported (-Step Backup) - their ids cannot be looked up once they are gone." -ForegroundColor Yellow
     }
 }
+if ($plan.RequiresTypedConfirmation -and -not $ConfirmTenant) {
+    throw "$Step not run: it changes $($plan.TargetCount) devices for real. Add -ConfirmTenant <tenant domain> to confirm which tenant that is."
+}
+
 # --- sign in ----------------------------------------------------------------
 $scopeArgs = @{}
 if ($Step -eq 'Wipe') { $scopeArgs.IncludeWipe = $true }
@@ -217,7 +225,7 @@ Connect-DCUGraph @connect | Out-Null
 # --- run --------------------------------------------------------------------
 # -Execute is the CLI's confirmation, so the run carries the key of the plan
 # it was given for; Invoke-DCUStep also saves the working set afterwards
-$summary = Invoke-DCUStep -Step $Step -Session $session -Devices $devices -Selection $plan.Targets -ConfirmationKey $plan.ConfirmationKey
+$summary = Invoke-DCUStep -Step $Step -Session $session -Devices $devices -Selection $plan.Targets -ConfirmationKey $plan.ConfirmationKey -TenantConfirmation $ConfirmTenant
 if ($summary.PSObject.Properties['WorkingSetError']) { Write-Host $summary.WorkingSetError -ForegroundColor Red }
 
 Write-Host ''

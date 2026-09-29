@@ -184,6 +184,40 @@ Check 'run: a working set that cannot be saved is reported on the result, not sw
     ($res.WorkingSetError -like '*the disk is full*') -and -not $res.PSObject.Properties['WorkingSet']
 }
 
+# --- large batches: the tenant has to be typed in ------------------------------------
+function BatchRows {
+    <# $Count devices, all found in Intune and none flagged #>
+    param([int]$Count)
+    $old = (Get-Date).AddDays(-300).ToString('o')
+    $inv = @(1..$Count | ForEach-Object { [pscustomobject]@{ id = "b-$_"; deviceName = "LT-B$_"; serialNumber = "BATCH$_"; lastSyncDateTime = $old } })
+    @(MatchRec -Devices @(1..$Count | ForEach-Object { NewRec -Serial "BATCH$_" }) -Intune $inv -Autopilot @() -Entra @())
+}
+function BatchPlan { param($Rows, [bool]$DryRun = $false) Resolve-DCURunPlan -Step IntuneDelete -Devices $Rows -Selection @($Rows.Key) -DryRun $DryRun -TenantDomain 'contoso.onmicrosoft.com' }
+
+Check 'plan: from 10 devices on, a real destructive run needs the tenant typed in' {
+    $nine = BatchPlan (BatchRows 9); $ten = BatchPlan (BatchRows 10); $dry = BatchPlan (BatchRows 10) -DryRun $true
+    -not $nine.RequiresTypedConfirmation -and $ten.RequiresTypedConfirmation -and -not $dry.RequiresTypedConfirmation -and
+    ($ten.TypedConfirmationText -eq 'contoso.onmicrosoft.com')
+}
+
+Check 'run: a large batch without the typed tenant is refused, and nothing is sent' {
+    $rows = BatchRows 10; $key = (BatchPlan $rows).ConfirmationKey
+    $err = Get-ThrownMessage { FakeStep IntuneDelete $rows -ViaInvokeStep -Selection @($rows.Key) -ConfirmationKey $key }
+    ($err -like '*typed in*') -and (@(FakeCalls).Count -eq 0)
+}
+
+Check 'run: a large batch confirmed for another tenant is refused, and nothing is sent' {
+    $rows = BatchRows 10; $key = (BatchPlan $rows).ConfirmationKey
+    $err = Get-ThrownMessage { FakeStep IntuneDelete $rows -ViaInvokeStep -Selection @($rows.Key) -ConfirmationKey $key -TenantConfirmation 'fabrikam.onmicrosoft.com' }
+    ($err -like "*'fabrikam.onmicrosoft.com' is not this tenant*") -and (@(FakeCalls).Count -eq 0)
+}
+
+Check 'run: a large batch runs with the tenant typed in, in any case' {
+    $rows = BatchRows 10; $key = (BatchPlan $rows).ConfirmationKey
+    $r = FakeStep IntuneDelete $rows -ViaInvokeStep -Selection @($rows.Key) -ConfirmationKey $key -TenantConfirmation ' Contoso.OnMicrosoft.com '
+    @($r.Calls | Where-Object { $_ -like 'DELETE*' }).Count -eq 10
+}
+
 # --- outcomes and status -----------------------------------------------------------
 Check 'the action loop records a machine-readable outcome for every row' {
     $d = @(NewRec -Serial 'A1'; NewRec -Serial 'B2'; NewRec -Serial 'C3')

@@ -371,7 +371,13 @@ function Get-CurrentPlan {
     if ($wiz.Index -lt 1 -or -not $wiz.CurrentKey -or $wiz.CurrentKey -eq '__setup') { return $null }
     $ticked = foreach ($d in $wiz.Devices) { if ($d.Apply) { $d.Key } }
     Resolve-DCURunPlan -Step (Get-RunStepKey $wiz.CurrentKey) -Devices @($wiz.Devices) -Selection @($ticked) `
-        -DryRun (Get-DryRun) -SignedIn (Test-SignedIn) -Options (Get-OptionValues)
+        -DryRun (Get-DryRun) -SignedIn (Test-SignedIn) -Options (Get-OptionValues) -TenantDomain (Get-TenantName)
+}
+
+function Get-TenantName {
+    <# what the administrator types to confirm a large batch - the domain, or the id if it could not be read #>
+    if (-not $wiz.SignIn) { return '' }
+    if ($wiz.SignIn.TenantDomain) { [string]$wiz.SignIn.TenantDomain } else { [string]$wiz.SignIn.TenantId }
 }
 
 function Update-StepModeCard {
@@ -1058,7 +1064,7 @@ $worker = {
                 # Invoke-DCUStep re-plans the run, refuses a destructive one whose
                 # confirmation does not match, and saves workingset.json after it
                 $summary = Invoke-DCUStep -Step $StepKey -Session $session -Devices @($Devices) `
-                    -Selection @($Selection) -ConfirmationKey ([string]$Extra.ConfirmationKey)
+                    -Selection @($Selection) -ConfirmationKey ([string]$Extra.ConfirmationKey) -TenantConfirmation ([string]$Extra.TenantConfirmation)
                 $Queue.Enqueue([pscustomobject]@{ Kind = 'done'; Payload = $summary })
             }
         }
@@ -1145,8 +1151,18 @@ function Start-StepRun {
             [System.Windows.MessageBoxButton]::YesNo, $icon, [System.Windows.MessageBoxResult]::No)
         if ($ans -ne [System.Windows.MessageBoxResult]::Yes) { Set-Status 'Cancelled - nothing was changed.'; return }
     }
+    $typed = ''
+    if ($plan.RequiresTypedConfirmation -and $env:DCU_WIZARD_SELFTEST -ne '1') {
+        # Invoke-DCUStep checks this against the real sign-in; asking here only saves a round trip
+        Add-Type -AssemblyName Microsoft.VisualBasic
+        $typed = [Microsoft.VisualBasic.Interaction]::InputBox(
+            "This changes $($plan.TargetCount) devices. Type the tenant's domain to confirm:`n`n$($plan.TypedConfirmationText)",
+            'Device CleanUpper - type the tenant to confirm', '')
+        if ($typed.Trim() -ne $plan.TypedConfirmationText) { Set-Status 'Not confirmed - the tenant was not typed correctly. Nothing was changed.'; return }
+    }
+
     $verb = if ($plan.Effect -ne 'ReadOnly' -and $plan.DryRun) { 'Simulating' } else { 'Running' }
-    Start-Run -Operation 'step' -StepKey $plan.Step -Selection $plan.Targets -Extra @{ ConfirmationKey = $plan.ConfirmationKey } `
+    Start-Run -Operation 'step' -StepKey $plan.Step -Selection $plan.Targets -Extra @{ ConfirmationKey = $plan.ConfirmationKey; TenantConfirmation = $typed } `
         -Status "$verb $($wiz.Steps[$wiz.Index].Name) on $($plan.TargetCount) device(s)..."
 }
 

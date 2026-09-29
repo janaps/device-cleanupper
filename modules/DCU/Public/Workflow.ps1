@@ -18,6 +18,11 @@
     record's property names will do.
 #>
 
+# From this many devices on, a real destructive run needs the administrator to
+# type the tenant's domain as well: a yes/no dialog is easy to click through,
+# and a typed name also catches "signed in to the wrong tenant".
+$script:DCUTypedConfirmMinDevices = 10
+
 function Get-DCUNavigationGate {
     <#
         .SYNOPSIS
@@ -100,10 +105,17 @@ function Resolve-DCURunPlan {
                                        NothingSelected, for hosts to word their own way
               ChangesTenant            this run sends writes (never in a dry run)
               RequiresConfirmation     destructive and for real
+              RequiresTypedConfirmation  ...and at least $script:DCUTypedConfirmMinDevices
+                                       devices: the tenant has to be typed in
+              TypedConfirmationText    what to type (-TenantDomain)
               ConfirmationKey
               Options                  the step options the plan was made with
         .PARAMETER Options
             This step's option overrides; merged with the catalogue defaults.
+        .PARAMETER TenantDomain
+            The signed-in tenant's domain (or id), shown as the text to type.
+            Only the wording depends on it; Invoke-DCUStep checks the typed
+            text against the real sign-in.
         .PARAMETER SignedIn
             The host's sign-in state. Invoke-DCUStep leaves it at $true - the
             step checks the real sign-in itself before it touches anything.
@@ -115,7 +127,8 @@ function Resolve-DCURunPlan {
         [string[]]$Selection = @(),
         [bool]$DryRun = $true,
         [bool]$SignedIn = $true,
-        [hashtable]$Options = @{}
+        [hashtable]$Options = @{},
+        [string]$TenantDomain = ''
     )
 
     $meta = Get-DCUStepMeta -Key $Step
@@ -184,6 +197,8 @@ function Resolve-DCURunPlan {
         BlockedReason        = $reason
         ChangesTenant        = $writes -and -not $DryRun
         RequiresConfirmation = $destructive -and -not $DryRun
+        RequiresTypedConfirmation = $destructive -and -not $DryRun -and $n -ge $script:DCUTypedConfirmMinDevices
+        TypedConfirmationText = $TenantDomain
         ConfirmationKey      = Get-DCUConfirmationKey -Step $meta.Key -DryRun $DryRun -Options $opts -Targets $sorted
         Options              = $opts
     }

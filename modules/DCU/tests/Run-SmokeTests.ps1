@@ -58,9 +58,9 @@ function FakeStep {
         -Selection, -ConfirmationKey and -DryRun are passed on to it.
     #>
     param([string]$Step, [object[]]$Rows, [hashtable]$StepOptions = @{}, [string[]]$Gone = @(),
-          [switch]$ViaInvokeStep, [string[]]$Selection = @(), [string]$ConfirmationKey, [bool]$DryRun = $false)
+          [switch]$ViaInvokeStep, [string[]]$Selection = @(), [string]$ConfirmationKey, [bool]$DryRun = $false, [string]$TenantConfirmation)
     & $mod {
-        param($step, $rows, $work, $opts, $gone, $via, $sel, $key, $dry)
+        param($step, $rows, $work, $opts, $gone, $via, $sel, $key, $dry, $typed)
         $saved = @{ Graph = ${function:Invoke-DCUGraph}; Auth = ${function:Assert-DCUSignedIn} }
         $script:fakeCalls = [System.Collections.Generic.List[string]]::new()
         $script:fakeGone  = @($gone)
@@ -71,9 +71,9 @@ function FakeStep {
                 if ($Method -eq 'GET' -and @($script:fakeGone | Where-Object { $Uri -like "*/$_" }).Count) { return $null }
                 [pscustomobject]@{ id = 'fake' }
             }
-            ${function:script:Assert-DCUSignedIn} = { [pscustomobject]@{ SignedIn = $true } }
+            ${function:script:Assert-DCUSignedIn} = { [pscustomobject]@{ SignedIn = $true; TenantDomain = 'contoso.onmicrosoft.com'; TenantId = 'tid-contoso' } }
             $session = New-DCUSession -WorkFolder $work -DryRun:$dry -StepOptions $opts
-            $res = if ($via) { Invoke-DCUStep -Step $step -Session $session -Devices $rows -Selection $sel -ConfirmationKey $key }
+            $res = if ($via) { Invoke-DCUStep -Step $step -Session $session -Devices $rows -Selection $sel -ConfirmationKey $key -TenantConfirmation $typed }
                    else { & "Invoke-DCU$step" -Session $session -Devices $rows }
             [pscustomobject]@{ Res = $res; Calls = @($script:fakeCalls) }
         }
@@ -81,7 +81,7 @@ function FakeStep {
             ${function:script:Invoke-DCUGraph}    = $saved.Graph
             ${function:script:Assert-DCUSignedIn} = $saved.Auth
         }
-    } $Step $Rows $tmp $StepOptions $Gone ([bool]$ViaInvokeStep) $Selection $ConfirmationKey $DryRun
+    } $Step $Rows $tmp $StepOptions $Gone ([bool]$ViaInvokeStep) $Selection $ConfirmationKey $DryRun $TenantConfirmation
 }
 
 function Get-ThrownMessage {
