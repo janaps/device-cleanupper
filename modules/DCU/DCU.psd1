@@ -1,6 +1,6 @@
 @{
     RootModule        = 'DCU.psm1'
-    ModuleVersion     = '1.0.0'
+    ModuleVersion     = '1.1.0'
     GUID              = '5c9a3f61-2d84-4b17-9e0c-7a6b4f2d81c3'
     Author            = 'Jan Aps'
     Copyright         = '(c) 2026 Jan Aps. MIT License.'

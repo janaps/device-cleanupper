@@ -1,48 +1,67 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 - 2026-09-29
 
-- The zip's `TESTING.md` is now `GETTING-STARTED.md`, written for anyone who
-  downloads a release, with how to report a problem without posting tenant data.
-- README: a quick start and an admin consent section. New: `CONTRIBUTING.md`,
-  `SECURITY.md` (private vulnerability reporting), issue forms, and the smoke
-  tests on GitHub Actions.
-- The workflow rules moved out of the wizard into the module, so the CLI and
-  any future front end follow the same ones; see `docs/ARCHITECTURE.md`. A
-  real destructive run now needs a confirmation for exactly the devices,
-  step and options it runs with, checked where the writes are sent.
-- The confirmation for a real destructive run now also says how many of the
-  devices were never exported in step 2.
-- Fixed: step 2 showed "nothing exported yet" again after any later step ran.
-- Fixed: the step 2 result panel showed the wrong fields (Length, Rank, ...).
-- Fixed: a Backup with every export switched off still marked the devices as
-  exported.
-- Fixed: a working set that could not be saved after a step, or on closing
-  the wizard, was lost without a word; an unwritable audit log, and settings
-  that could not be read or saved, are now reported too.
-- Faster ticking of all / none / the safe devices on long lists.
-- CLI: it works out which devices a step acts on before signing in, and stops
-  without signing in when there is nothing to do. A destructive step now also
-  leaves out devices that were never looked up, unless `-IncludeWarned` is
-  given. `-Selection` is ignored, with a notice, for the steps that always use
-  the whole list (Lookup, AutopilotSync, FinalCheck).
-- Working sets are saved with a `SchemaVersion`; older ones still load.
-- **New: the browser version** (`Launch-Web.cmd`). The same steps and rules in
-  a browser tab, served from this computer only (127.0.0.1, a one-time key in
-  the link). One mode switch, a plain-words summary of what each button will
-  do, device filters, and the list saved after every change - a replaced or
-  shortened list is kept as a copy first.
-- **Large batches need the tenant typed in**: a real destructive run on 10 or
-  more devices asks for the tenant's domain as well (browser and wizard), or
-  `-ConfirmTenant` (CLI). It is checked against the tenant you are actually
-  signed in to.
+### New
+
+- **The browser version** (`Launch-Web.cmd`): the same steps, rules and
+  sign-in as the wizard, in a browser tab, served from this computer only
+  (127.0.0.1, with a one-time key in the link). One Dry run / LIVE switch, a
+  plain-words summary of what each button will do, device filters, and the
+  list saved after every change - a list that is replaced or shortened is kept
+  as a copy first. The wizard and the command line stay.
+- **Large batches need the tenant typed in**: a real run of a destructive step
+  on 10 or more devices also asks for the tenant's domain (browser and wizard),
+  or `-ConfirmTenant` (command line). It is checked against the tenant you are
+  actually signed in to, so it also catches "signed in to the wrong tenant".
+- **The confirmation for a real run says more**: how many of the devices were
+  never exported in step 2, as well as which ones are flagged. What was
+  confirmed is what runs - the confirmation is for exactly those devices, that
+  step and those options.
 - **The audit log falls back**: when `logs\` in the working folder cannot be
   written, the lines go to `%LOCALAPPDATA%\DeviceCleanUpper\logs` and you are
   told once. When neither can be written, runs that change the tenant are
-  refused; dry runs still work. A missing `logs` folder no longer stops a run.
-- Browser version: the buttons for reading a pasted list, a file or typed rows
-  stayed greyed out when page 1 was opened while something was still running
-  (for example straight after signing in).
+  refused; dry runs still work.
+
+### Changed - may affect scripts that use the command line
+
+- `-Execute` on 10 or more devices in a destructive step now also needs
+  `-ConfirmTenant <tenant domain>`. Without it the run stops before signing in,
+  and says so.
+- A destructive step without `-Selection` now also leaves out devices that were
+  never looked up (as well as the flagged ones), unless `-IncludeWarned` is
+  given.
+- `-Selection` is ignored, with a notice, for the steps that always use the
+  whole list: Lookup, AutopilotSync and FinalCheck.
+- The command line works out which devices a step acts on before it signs in,
+  and stops without signing in when there is nothing to do.
+
+### Changed
+
+- The workflow rules moved out of the wizard into the module, so the wizard,
+  the command line and the browser version follow the same ones. See
+  `docs/ARCHITECTURE.md`.
+- Working sets are saved with a `SchemaVersion`; lists saved by 1.0.0 still
+  load.
+- Faster ticking of all / none / the safe devices on long lists.
+- README: a quick start and an admin consent section. New: `CONTRIBUTING.md`,
+  `SECURITY.md` (private vulnerability reporting), issue forms, and the tests
+  on GitHub Actions. The zip's `TESTING.md` is now `GETTING-STARTED.md`,
+  written for anyone who downloads a release, with how to report a problem
+  without posting tenant data.
+
+### Fixed
+
+- Step 2 showed "nothing exported yet" again after any later step ran.
+- The step 2 result panel in the wizard showed the wrong fields (Length,
+  Rank, ...).
+- A Backup with every export switched off still marked the devices exported.
+- A working set that could not be saved after a step, or when closing the
+  wizard, was lost without a word. An unwritable audit log, and settings that
+  could not be read or saved, are now reported too.
+- A `logs` folder that could not be created stopped every run, dry runs
+  included.
+
 ## 1.0.0 - 2026-09-25
 
 First public release.
