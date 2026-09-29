@@ -53,7 +53,7 @@ function Invoke-DCUDeviceLoop {
         $decision = & $Plan $d $Options
         if (-not $decision.Eligible) {
             $counts.Skipped++
-            $d.Result = "Skipped - $($decision.Reason)"
+            Set-DCUDeviceResult $d Skipped "Skipped - $($decision.Reason)"
             Write-DCULog -Level Info -Category $Category -Message "SKIP $label - $($decision.Reason)"
             continue
         }
@@ -65,7 +65,7 @@ function Invoke-DCUDeviceLoop {
 
         if ($script:DryRun) {
             $counts.Simulated++
-            $d.Result = "DRY RUN - would $($decision.What)"
+            Set-DCUDeviceResult $d Simulated "DRY RUN - would $($decision.What)"
             Write-DCULog -Level Info -Category 'DryRun' -Message "DRY RUN - would $($decision.What) for $label"
             continue
         }
@@ -74,13 +74,15 @@ function Invoke-DCUDeviceLoop {
             $r = & $Act $d $Options
             $counts.Done++
             $msg = if ($r -and $r.Message) { $r.Message } else { $decision.What }
-            $d.Result = $msg
+            # an Act that only got its request accepted says so with Outcome = 'Pending'
+            $outcome = if ($r -and $r.Outcome) { $r.Outcome } else { 'Done' }
+            Set-DCUDeviceResult $d $outcome $msg
             Write-DCULog -Level Success -Category $Category -Message "$label - $msg"
         }
         catch [System.OperationCanceledException] { throw }
         catch {
             $counts.Failed++
-            $d.Result = "FAILED - $($_.Exception.Message)"
+            Set-DCUDeviceResult $d Failed "FAILED - $($_.Exception.Message)"
             Write-DCULog -Level Error -Category $Category -Message "$label - $($_.Exception.Message)"
         }
     }
@@ -310,14 +312,14 @@ function Invoke-DCUAutopilotDelete {
                 -Context 'delete Autopilot registration' -Tolerate 404 | Out-Null
         }
         $d.AutopilotState = 'Deletion pending'
-        [pscustomobject]@{ Message = "PENDING - Autopilot delete accepted for $($ids.Count) record(s), not confirmed yet" }
+        [pscustomobject]@{ Outcome = 'Pending'; Message = "PENDING - Autopilot delete accepted for $($ids.Count) record(s), not confirmed yet" }
     }
 
     $counts = Invoke-DCUDeviceLoop -Targets $targets -Activity 'Removing Autopilot registrations' -Category 'Autopilot' -Plan $plan -Act $act `
         -Options @{ Unassign = $unassign; SyncRef = $syncRef }
 
     # one look straight away - some deletes go through within seconds
-    $sent = @($targets | Where-Object { $_.AutopilotState -eq 'Deletion pending' -and $_.Result -like 'PENDING*' })
+    $sent = @($targets | Where-Object { $_.AutopilotState -eq 'Deletion pending' -and $_.Outcome -eq 'Pending' })
     $confirmed = 0
     if (-not $script:DryRun -and $sent.Count) {
         $confirmed = Wait-DCUAutopilotRemoval -Devices $sent -Minutes 0 -PendingHint "$syncRef confirms it"
@@ -493,7 +495,7 @@ function Wait-DCUAutopilotRemoval {
 
                 $d.AutopilotState = 'Deleted'
                 $d.AutopilotId    = ''
-                $d.Result         = 'Autopilot registration removed (confirmed gone)'
+                Set-DCUDeviceResult $d Done 'Autopilot registration removed (confirmed gone)'
                 Write-DCULog -Level Success -Category 'Autopilot' -Message "$(Get-DCUDeviceLabel $d) - Autopilot registration confirmed gone"
                 [void]$left.Remove($d)
             }
@@ -525,7 +527,7 @@ function Wait-DCUAutopilotRemoval {
     finally { Write-DCUProgress -Id 0 -Live -Activity 'Waiting for Autopilot' -Completed }
 
     foreach ($d in $left) {
-        $d.Result = "PENDING - Autopilot delete accepted, but the registration is still in the list - $PendingHint"
+        Set-DCUDeviceResult $d Pending "PENDING - Autopilot delete accepted, but the registration is still in the list - $PendingHint"
     }
     $total - $left.Count
 }

@@ -14,6 +14,7 @@ $script:LogSink      = $null   # scriptblock param($entry)
 $script:ProgressSink = $null   # scriptblock param($progress)
 $script:CancelToken  = $null   # [ref] to a [bool]; $true means "cancel requested"
 $script:VerboseLog   = $false  # include Verbose-level entries in the default sink
+$script:AuditFailedFor = $null # the audit file a write failure was already reported for
 
 function Write-DCULog {
     [CmdletBinding()]
@@ -119,5 +120,16 @@ function Write-DCUAuditLine {
         $line = "{0:yyyy-MM-dd HH:mm:ss}`t{1}`t{2}`t{3}" -f $Entry.Timestamp, $Entry.Level, $Entry.Category, ($Entry.Message -replace "`r?`n", ' ')
         Add-Content -LiteralPath $script:AuditFile -Value $line -Encoding UTF8 -ErrorAction Stop
     }
-    catch { }
+    catch {
+        # a missing audit trail must not go unnoticed - but say it once per
+        # file, and not through Write-DCULog, which would land back here
+        if ($script:AuditFailedFor -eq $script:AuditFile) { return }
+        $script:AuditFailedFor = $script:AuditFile
+        $warn = [pscustomobject]@{
+            Timestamp = Get-Date; Level = 'Warn'; Category = 'Audit'
+            Message   = "The audit log $($script:AuditFile) cannot be written ($($_.Exception.Message)). From here on, log lines are NOT kept on disk - fix the working folder before running anything for real."
+        }
+        if ($script:LogSink) { try { & $script:LogSink $warn } catch { } }
+        else { Microsoft.PowerShell.Utility\Write-Host ("{0:HH:mm:ss} [!] {1}" -f $warn.Timestamp, $warn.Message) -ForegroundColor Yellow }
+    }
 }

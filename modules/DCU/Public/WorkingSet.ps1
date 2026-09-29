@@ -29,6 +29,9 @@ function Save-DCUWorkingSet {
     if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
 
     $payload = [pscustomobject]@{
+        # 2 = device records carry Outcome and ExportedAt. Older files load
+        # fine: ConvertTo-DCUDeviceRecord fills and migrates missing fields.
+        SchemaVersion = 2
         Saved      = (Get-Date).ToString('s')
         Tenant     = $script:TenantDomainCache
         DryRun     = $script:DryRun

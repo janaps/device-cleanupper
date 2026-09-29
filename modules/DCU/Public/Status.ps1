@@ -15,7 +15,12 @@ function Get-DCUStepList {
             Key         = $_.Key
             Number      = $_.Number
             Name        = $_.Name
-            Destructive = [bool]$_.Destructive
+            Effect      = $_.Effect
+            Scope       = $_.Scope
+            # kept for callers that only need the yes/no: deletes or wipes
+            Destructive = ($_.Effect -eq 'Destructive')
+            Summary     = [string]$_.Summary
+            Explainer   = [string]$_.Explainer
             Options     = $_.Options
         }
     }
@@ -44,7 +49,9 @@ function Get-DCUStatus {
     $inIntune   = @($devices | Where-Object { $_.IntuneId }).Count
     $inAp       = @($devices | Where-Object { $_.AutopilotId }).Count
     $inEntra    = @($devices | Where-Object { $_.EntraObjectId }).Count
-    $exported   = @($devices | Where-Object { $_.BitLockerState -or $_.Result -like 'Exported*' }).Count
+    # an explicit field, not the Result text: every later step overwrites
+    # Result, and step 2 must not look undone again after step 4 ran
+    $exported   = @($devices | Where-Object { $_.ExportedAt -or $_.BitLockerState }).Count
     $intuneGone = @($devices | Where-Object { $_.IntuneState -eq 'Deleted' -or $_.IntuneState -eq 'Not in Intune' }).Count
     # a sent-but-unconfirmed Autopilot delete keeps its id: step 5 is done for
     # that row, step 6 (sync and confirm) is not
@@ -52,6 +59,10 @@ function Get-DCUStatus {
     $apToDelete = @($devices | Where-Object { $_.AutopilotId -and $_.AutopilotState -ne 'Deletion pending' }).Count
     $apRemoved  = @($devices | Where-Object { $_.AutopilotState -in 'Deleted', 'Gone from Autopilot' }).Count
     $apSteps    = "steps $((Get-DCUStepMeta 'AutopilotDelete').Number) and $((Get-DCUStepMeta 'AutopilotSync').Number)"
+
+    $gate = Get-DCUNavigationGate -Devices $devices -SignedIn $SignedIn
+    $lastReachable = if ($gate.LastReachable) { Get-DCUStepIndex $gate.LastReachable } else { -1 }
+    $index = 0
 
     $rows = foreach ($meta in $script:DCUStepCatalog) {
         $status = 'Ready'
@@ -110,12 +121,16 @@ function Get-DCUStatus {
             }
         }
         [pscustomobject]@{
-            Key    = $meta.Key
-            Number = $meta.Number
-            Name   = $meta.Name
-            Status = $status
-            Detail = $detail
+            Key       = $meta.Key
+            Number    = $meta.Number
+            Name      = $meta.Name
+            Status    = $status
+            Detail    = $detail
+            # Status says whether the step has work to do; Reachable says
+            # whether the workflow lets you get to it yet (Get-DCUNavigationGate)
+            Reachable = ($index -le $lastReachable)
         }
+        $index++
     }
 
     $rows

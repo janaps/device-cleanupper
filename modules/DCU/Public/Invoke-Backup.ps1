@@ -50,7 +50,9 @@ function Invoke-DCUBackup {
     if ($exportCsv) {
         $csvPath  = Join-Path $folder "devices-$stamp.csv"
         $jsonPath = Join-Path $folder "devices-$stamp.json"
-        Export-DCUDeviceCsv -Devices $targets -Path $csvPath
+        # Out-Null: it returns the path, and a second object on the output
+        # turns this step's summary into an array
+        Export-DCUDeviceCsv -Devices $targets -Path $csvPath | Out-Null
         $targets | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $jsonPath -Encoding UTF8
         Write-DCULog -Level Success -Category 'Backup' -Message "Device list exported: $csvPath"
         Write-DCULog -Category 'Backup' -Message "Same data as JSON: $jsonPath"
@@ -110,7 +112,19 @@ function Invoke-DCUBackup {
         }
     }
 
-    foreach ($d in $targets) { if (-not $d.Result) { $d.Result = 'Exported' } }
+    # ExportedAt is what the rest of the tool reads ("was this written down
+    # before it was deleted?"), so it is only set when the device file was
+    # really written - not for a run with every export switched off
+    if ($exportCsv) {
+        $when = (Get-Date).ToString('yyyy-MM-dd HH:mm')
+        foreach ($d in $targets) {
+            $d.ExportedAt = $when
+            Set-DCUDeviceResult $d Done "Exported to $([IO.Path]::GetFileName($csvPath))"
+        }
+    }
+    elseif (-not $doBitLocker) {
+        Write-DCULog -Level Warn -Category 'Backup' -Message 'Nothing was exported - both the device list and the BitLocker keys are switched off.'
+    }
 
     [pscustomobject]@{
         Step            = 'Backup'

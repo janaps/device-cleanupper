@@ -45,6 +45,16 @@
         'Save-DCUWorkingSet'
         'Import-DCUWorkingSet'
         'Export-DCUDeviceCsv'
+        'Get-DCUDeviceFields'
+        # workflow rules (pure) + the one way hosts run a step
+        'Get-DCUNavigationGate'
+        'Get-DCUSafeSelection'
+        'Resolve-DCURunPlan'
+        'Invoke-DCUStep'
+        # host settings (never the dry-run switch)
+        'ConvertTo-DCUSettings'
+        'Read-DCUSettings'
+        'Save-DCUSettings'
     )
     CmdletsToExport   = @()
     VariablesToExport = @()

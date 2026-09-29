@@ -80,14 +80,14 @@ function Invoke-DCUFinalCheck {
 
         if ($todo.Count) {
             $notReady++
-            $d.Result = 'NOT ready: ' + ($todo -join '; ')
+            Set-DCUDeviceResult $d NotReady ('NOT ready: ' + ($todo -join '; '))
             $d.Warn = $true
             $d.Flag = ($todo -join ' | ')
             Write-DCULog -Level Warn -Category 'Check' -Message "$label - $($d.Result)"
         }
         else {
             $ready++
-            $d.Result = 'Ready for handover'
+            Set-DCUDeviceResult $d Done 'Ready for handover'
             $d.Warn = $false
             $d.Flag = if ($inEntra) { 'Entra ID object still present (normal for an Autopilot device)' } else { '' }
             Write-DCULog -Level Success -Category 'Check' -Message "$label - ready for handover."

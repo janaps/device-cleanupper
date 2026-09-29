@@ -47,10 +47,10 @@ function Invoke-DCULookup {
     $matched = Resolve-DCUDeviceMatches -Devices $devices -Intune $script:IntuneDevices `
         -Autopilot $script:AutopilotDevices -Entra $script:EntraDevices -RecentDays $script:RecentDays
 
-    # a fresh lookup pre-ticks the safe rows: found, and not recently used
+    # a fresh lookup pre-ticks the safe rows: found, and not flagged
     foreach ($r in $matched) {
         if ($Selection) { $r.Apply = ($Selection -contains $r.Key) }
-        else { $r.Apply = ($r.Match -ne 'Not found' -and -not $r.Warn) }
+        else { $r.Apply = Test-DCUSafeDevice $r }
     }
 
     $found   = @($matched | Where-Object { $_.Match -ne 'Not found' }).Count

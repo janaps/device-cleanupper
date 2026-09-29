@@ -21,9 +21,65 @@ $script:DCUDeviceFields = @(
     'AutopilotId', 'AutopilotGroupTag', 'AutopilotEnrollment', 'AutopilotUser'
     'LastActivity', 'DaysSinceActivity'
     'Warn', 'Flag'
-    'IntuneState', 'AutopilotState', 'EntraState', 'BitLockerState', 'Result'
+    'IntuneState', 'AutopilotState', 'EntraState', 'BitLockerState', 'Result', 'Outcome', 'ExportedAt'
     'Apply'
 )
+
+# What the last step did to a row, as a value a program can test - Result is
+# the sentence for people. Set both through Set-DCUDeviceResult, never by hand.
+$script:DCUOutcomes = @(
+    'Done'        # the step did what it set out to do
+    'Simulated'   # dry run: it would have
+    'Skipped'     # not eligible for this step; Result says why
+    'Pending'     # accepted by the tenant, not confirmed yet (Autopilot delete)
+    'Failed'      # the call failed; Result carries the error
+    'NotReady'    # final check: something is still left to do
+)
+
+function Get-DCUDeviceFields {
+    <# The field list of a device record, for hosts that keep their own row type (the wizard grid). #>
+    @($script:DCUDeviceFields)
+}
+
+function Set-DCUDeviceResult {
+    <# The one place a row's Outcome and Result are written, so they cannot drift apart. #>
+    param(
+        [Parameter(Mandatory)]$Record,
+        [Parameter(Mandatory)][ValidateScript({ $_ -in $script:DCUOutcomes })][string]$Outcome,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text
+    )
+    $Record.Outcome = $Outcome
+    $Record.Result  = $Text
+}
+
+function Test-DCUSafeDevice {
+    <#
+        Whether a row may be picked without the administrator looking at it:
+        looked up, found, and not flagged. The lookup pre-ticks exactly these,
+        the wizard's "tick the safe ones" button ticks exactly these, and the
+        CLI acts on exactly these unless told otherwise.
+    #>
+    param([Parameter(Mandatory)]$Device)
+    ($Device.Match -notin 'Not looked up', 'Not found', '') -and -not $Device.Warn
+}
+
+function ConvertFrom-DCULegacyResult {
+    <#
+        Working sets saved before Outcome existed carry only the Result text.
+        Read the outcome back out of it once, when the row is loaded, so no
+        other code has to parse Result again.
+    #>
+    param([string]$Result)
+    switch -Wildcard ($Result) {
+        ''          { return '' }
+        'FAILED*'   { return 'Failed' }
+        'NOT ready*' { return 'NotReady' }
+        'DRY RUN*'  { return 'Simulated' }
+        'Skipped*'  { return 'Skipped' }
+        'PENDING*'  { return 'Pending' }
+        default     { return 'Done' }
+    }
+}
 
 function New-DCUDeviceRecord {
     <# An empty record with every field present, so nothing is $null-by-absence. #>
@@ -76,6 +132,10 @@ function ConvertTo-DCUDeviceRecord {
         }
         if (-not $r.Key) { $r.Key = Get-DCUDeviceKey -Serial $r.Serial -Name $r.Name -Raw $r.Raw }
         if (-not $r.Match) { $r.Match = 'Not looked up' }
+        if ($r.Result -and -not $r.Outcome) {
+            $r.Outcome = ConvertFrom-DCULegacyResult $r.Result
+            if ($r.Result -like 'Exported*' -and -not $r.ExportedAt) { $r.ExportedAt = 'before this version' }
+        }
         [pscustomobject]$r
     }
 }

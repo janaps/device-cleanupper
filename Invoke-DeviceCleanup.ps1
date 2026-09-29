@@ -77,6 +77,7 @@ param(
     [hashtable]$Option = @{},
 
     [string]$TenantId,
+
     [switch]$UseDeviceCode,
     [switch]$ShowVerbose
 )
@@ -167,6 +168,41 @@ if (-not $devices.Count) {
     throw "No devices in $workingSet. Run -Step DeviceInput first."
 }
 
+# --- selection --------------------------------------------------------------
+# The CLI has no ticks, so it says up front which devices a step acts on:
+# -Selection if given; otherwise, for a destructive step, only the safe ones
+# (looked up, found, not flagged) unless -IncludeWarned; otherwise all.
+$meta = Get-DCUStepList | Where-Object Key -eq $Step
+if ($Selection -and $meta.Scope -eq 'WholeList') {
+    Write-Host "-Selection is ignored: $Step always works on the whole list." -ForegroundColor Yellow
+}
+$sel = if ($Selection) { @($Selection) } else { @($devices | ForEach-Object Key) }
+if ($meta.Destructive -and -not $Selection -and -not $IncludeWarned) {
+    $safe = @(Get-DCUSafeSelection -Devices $devices)
+    $left = @($devices | Where-Object { $_.Key -notin $safe })
+    if ($left.Count) {
+        Write-Host ''
+        Write-Host "$($left.Count) device(s) are flagged or not found and are being LEFT OUT of this step:" -ForegroundColor Yellow
+        foreach ($w in $left) {
+            $why = if ($w.Flag) { $w.Flag } else { $w.Match }
+            Write-Host ("  - {0,-28} {1}" -f (@($w.Name, $w.Serial, $w.Raw) | Where-Object { $_ } | Select-Object -First 1), $why) -ForegroundColor Yellow
+        }
+        Write-Host 'Add -IncludeWarned to act on them anyway, or -Selection to pick devices by key.' -ForegroundColor Yellow
+        Write-Host ''
+        if (-not $safe.Count) { throw 'Every device on the list is flagged or not found - nothing to do without -IncludeWarned.' }
+    }
+    $sel = $safe
+}
+
+# decided before signing in: a run with nothing to do should not touch the tenant at all
+$plan = Resolve-DCURunPlan -Step $Step -Devices $devices -Selection $sel -DryRun $session.DryRun -Options $Option
+if (-not $plan.CanRun) { throw "$Step not run: $($plan.BlockedReason)" }
+if ($plan.RequiresConfirmation) {
+    Write-Host "$($plan.Name): about to $($plan.ConfirmAction) $($plan.TargetCount) device(s), for real." -ForegroundColor Yellow
+    if ($plan.NotBackedUp) {
+        Write-Host "  $($plan.NotBackedUp) of them were never exported (-Step Backup) - their ids cannot be looked up once they are gone." -ForegroundColor Yellow
+    }
+}
 # --- sign in ----------------------------------------------------------------
 $scopeArgs = @{}
 if ($Step -eq 'Wipe') { $scopeArgs.IncludeWipe = $true }
@@ -178,33 +214,11 @@ if ($TenantId)      { $connect.TenantId = $TenantId }
 if ($UseDeviceCode) { $connect.UseDeviceCode = $true }
 Connect-DCUGraph @connect | Out-Null
 
-# --- selection --------------------------------------------------------------
-$destructive = ($Step -in 'Wipe', 'IntuneDelete', 'AutopilotDelete', 'EntraDelete')
-$sel = $Selection
-if ($destructive -and -not $sel -and -not $IncludeWarned) {
-    $warned = @($devices | Where-Object { $_.Warn })
-    if ($warned.Count) {
-        Write-Host ''
-        Write-Host "$($warned.Count) device(s) are flagged and are being LEFT OUT of this step:" -ForegroundColor Yellow
-        foreach ($w in $warned) {
-            Write-Host ("  - {0,-28} {1}" -f (@($w.Name, $w.Serial, $w.Raw) | Where-Object { $_ } | Select-Object -First 1), $w.Flag) -ForegroundColor Yellow
-        }
-        Write-Host 'Add -IncludeWarned to act on them anyway, or -Selection to pick devices by key.' -ForegroundColor Yellow
-        Write-Host ''
-        $sel = @($devices | Where-Object { -not $_.Warn } | ForEach-Object Key)
-        if (-not $sel.Count) { throw 'Every device on the list is flagged - nothing to do without -IncludeWarned.' }
-    }
-}
-
 # --- run --------------------------------------------------------------------
-$fn = "Invoke-DCU$Step"
-$callArgs = @{ Session = $session; Devices = $devices }
-if ($sel) { $callArgs.Selection = $sel }
-$summary = & $fn @callArgs
-
-if ($summary.PSObject.Properties.Name -contains 'Rows') {
-    Save-DCUWorkingSet -Devices $summary.Rows -Path $workingSet -Session $session | Out-Null
-}
+# -Execute is the CLI's confirmation, so the run carries the key of the plan
+# it was given for; Invoke-DCUStep also saves the working set afterwards
+$summary = Invoke-DCUStep -Step $Step -Session $session -Devices $devices -Selection $plan.Targets -ConfirmationKey $plan.ConfirmationKey
+if ($summary.PSObject.Properties['WorkingSetError']) { Write-Host $summary.WorkingSetError -ForegroundColor Red }
 
 Write-Host ''
 $summary | Select-Object -Property * -ExcludeProperty Rows, Checklist | Format-List | Out-String | Write-Host
@@ -222,6 +236,6 @@ if ($summary.PSObject.Properties.Name -contains 'Rows') {
         Format-Table -AutoSize | Out-String -Width 240 | Write-Host
 }
 
-if ($session.DryRun -and ($destructive -or $Step -eq 'AutopilotSync')) {
+if ($session.DryRun -and $plan.Effect -ne 'ReadOnly') {
     Write-Host 'This was a DRY RUN - nothing was changed. Re-run with -Execute to apply it.' -ForegroundColor Cyan
 }

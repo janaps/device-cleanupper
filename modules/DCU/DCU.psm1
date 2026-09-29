@@ -94,4 +94,12 @@ Export-ModuleMember -Function @(
     'Save-DCUWorkingSet'
     'Import-DCUWorkingSet'
     'Export-DCUDeviceCsv'
+    'Get-DCUDeviceFields'
+    'Get-DCUNavigationGate'
+    'Get-DCUSafeSelection'
+    'Resolve-DCURunPlan'
+    'Invoke-DCUStep'
+    'ConvertTo-DCUSettings'
+    'Read-DCUSettings'
+    'Save-DCUSettings'
 )

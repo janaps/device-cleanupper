@@ -88,6 +88,8 @@ public class DcuDevice : INotifyPropertyChanged {
     public string EntraState { get; set; }
     public string BitLockerState { get; set; }
     public string Result { get; set; }
+    public string Outcome { get; set; }
+    public string ExportedAt { get; set; }
 
     bool _apply; public bool Apply { get { return _apply; } set { _apply = value; PC("Apply"); } }
 
@@ -110,14 +112,16 @@ public class DcuDevice : INotifyPropertyChanged {
         }
     }
     public string FlagColor { get { return Warn ? "#C0281F" : "#6E7681"; } }
+    // colour follows the module's Outcome, never the wording of Result
     public string ResultColor {
         get {
-            if (string.IsNullOrEmpty(Result)) return "#6E7681";
-            if (Result.StartsWith("FAILED") || Result.StartsWith("NOT ready")) return "#C0281F";
-            if (Result.StartsWith("DRY RUN")) return "#1A56C4";
-            if (Result.StartsWith("Skipped")) return "#6E7681";
-            if (Result.StartsWith("PENDING")) return "#A25A00";
-            return "#1B7F35";
+            switch (Outcome) {
+                case "Failed": case "NotReady": return "#C0281F";
+                case "Simulated": return "#1A56C4";
+                case "Pending": return "#A25A00";
+                case "Done": return "#1B7F35";
+                default: return "#6E7681";
+            }
         }
     }
 }
@@ -136,6 +140,13 @@ $ModuleRoot = Join-Path $RootPath 'modules'
 $env:PSModulePath = "$ModuleRoot$([IO.Path]::PathSeparator)$env:PSModulePath"
 Import-Module $ModulePath -Force
 
+# The grid row type above is a hand-written copy of the module's device
+# record. A field it lacks would be dropped without a word on every round trip
+# through the grid - so refuse to start instead.
+$DeviceFields = @(Get-DCUDeviceFields)
+$missingFields = @($DeviceFields | Where-Object { -not [DcuDevice].GetProperty($_) })
+if ($missingFields.Count) { throw "The wizard's DcuDevice type is missing device field(s): $($missingFields -join ', '). Add them to the class in Wizard.ps1." }
+
 $xamlPath = Join-Path $RootPath 'gui\MainWindow.xaml'
 $xamlText = Get-Content -Path $xamlPath -Raw
 $window = [Windows.Markup.XamlReader]::Load([System.Xml.XmlNodeReader]::new(([xml]$xamlText)))
@@ -152,10 +163,6 @@ $ConfigPath = Join-Path $ConfigDir 'config.json'
 $MergedPageKey = 'DeviceInput'
 $MergedRunKey  = 'Lookup'
 
-# steps that always work on the whole list instead of the ticked rows: ticking
-# rows for a lookup, a sync or a final check would only hide devices from it
-$WholeListSteps = 'Lookup', 'AutopilotSync', 'FinalCheck'
-
 function Get-RunStepKey {
     <# which catalogue step the Run button on a page actually invokes #>
     param([string]$PageKey)
@@ -163,83 +170,21 @@ function Get-RunStepKey {
     $PageKey
 }
 
-# short per-step descriptions for the page header
-$StepDesc = @{
-    DeviceInput     = 'Put the devices that are leaving this tenant on the list, then look them up. Read the list from a CSV or Excel file, paste it in, type it in, or pick up a list you saved earlier - and then have Intune, Windows Autopilot and Entra ID checked for every one of them.'
-    Lookup          = 'Find every device on the list in Intune, Windows Autopilot and Entra ID, and flag the ones that look like they are still in use. Read-only.'
-    Backup          = 'Write down what these devices were before they stop existing: device names, serial numbers and the Intune / Entra / Autopilot ids - and, if you need them, the BitLocker recovery keys. Read-only.'
-    Wipe            = 'Optional. Send a wipe or a retire to devices you still have and that can still come online. The command is queued in Intune and runs the next time the device checks in.'
-    IntuneDelete    = 'Delete the Intune device objects, so this tenant no longer manages the devices. Step 1 of the two that actually release the hardware.'
-    AutopilotDelete = 'Delete the Windows Autopilot registrations. This is the step that releases the serial numbers - until it is done, the devices keep landing back in this tenant at OOBE and the other tenant cannot register them.'
-    AutopilotSync   = 'Check whether the registrations deleted in step 5 are gone yet; only if one is still there, ask Intune to sync the Autopilot list and wait until it is. Run it after ALL your Autopilot deletes - Intune only accepts a manual sync every so often.'
-    EntraDelete     = 'Delete the Entra ID device objects. Usually NOT needed: for an Autopilot + Entra joined device the object is cleaned up once Intune and Autopilot are gone. It matters for devices that were never in Autopilot.'
-    FinalCheck      = 'Re-read all three systems and prove the devices really are released. Writes the handover report and lists whatever still has to be done by hand.'
+function Get-StepMeta {
+    <# the catalogue entry (Get-DCUStepList) - names, texts, Effect and Scope all come from the module #>
+    param([string]$Key)
+    $wiz.Catalog | Where-Object Key -eq $Key | Select-Object -First 1
 }
 
-# the "How this step works" card under the banner
-$StepInfo = @{
-    Lookup = @'
-Every device on the list is looked up in three places at once: the Intune managed-device list, the Windows Autopilot device list and the Entra ID device list. Matching is on serial number first and device name second - a value that could be either is tried both ways, so a single pasted column does not have to be labelled.
-
-Nothing is changed. This step exists to tell you what you are about to delete: which of the three systems each device is in, who used it, when it last checked in, and whether anything looks wrong.
-
-Devices that checked in recently are flagged in red and left unticked. So are devices that matched nothing, devices that matched more than one record, and hybrid joined devices.
-'@
-    Backup = @'
-Once the Intune, Autopilot and Entra records are deleted, their ids cannot be looked up again - and deleting an Entra device object also throws away the BitLocker recovery keys Entra was holding for it. This is the step that is genuinely hard to undo by skipping.
-
-The export is a semicolon-separated CSV (opens straight into Excel) plus the same data as JSON.
-
-BitLocker keys are off by default and need their own consent. Exporting the key VALUES makes that file as good as the disks themselves - keep it somewhere safe and delete it when the handover is done.
-'@
-    Wipe = @'
-Optional, and only for hardware you still physically have. Intune queues the command and it runs the next time the device comes online - a laptop that is already boxed up will never receive it, which is fine: deleting the records still releases it.
-
-Wipe resets Windows to a clean state, which is what you want before handing hardware to somebody else. Retire only removes company data, apps and policies and leaves the user profile alone.
-
-This does not delete anything from Intune. That is the next step.
-'@
-    IntuneDelete = @'
-Removes the Intune device object, so this tenant stops managing the device.
-
-On its own this does NOT release the hardware: while the serial number is still registered in Windows Autopilot, the device keeps coming back to this tenant at OOBE. Do steps 5 and 6 as well.
-
-The order matters. Intune first, then Autopilot, and only then (if at all) the Entra ID object - removing the Entra object first is what leaves stuck enrollments and orphaned records behind.
-'@
-    AutopilotDelete = @'
-This is the step that actually releases the serial numbers. The assigned user is removed first, then the device identity is deleted.
-
-Deletion is asynchronous: Intune accepts it straight away, but the registration can stay in the list for minutes. A device is therefore marked "Deletion pending" here, not Deleted - step 6 syncs Autopilot and confirms it is really gone.
-
-This step does NOT sync. If you remove devices in several batches, run this step for each batch first and step 6 once at the end: Intune only accepts a manual sync every so often.
-
-If a device was never registered in Autopilot, its row is skipped here - that is normal, not a failure. A device whose delete was already sent is skipped too.
-'@
-    AutopilotSync = @'
-First looks up every registration that step 5 deleted. If they are all gone already, that is it - no sync is sent. Only when at least one is still in Autopilot does it send one "sync" (the same as the Sync button in the Intune portal) and then re-read the remaining ones until they are really gone, or until the waiting time runs out, with a countdown in the activity list. Only then is a device marked Deleted.
-
-Intune accepts a manual sync only every so often. If it refuses because a sync ran recently (from here or from the portal), that sync counts: the removals are still checked, and the log shows when the last sync was.
-
-Still pending when the time runs out? Nothing is wrong - run this step again in a few minutes. Cancel stops the waiting, never the deletes. The Entra ID step skips every device that is still in Autopilot.
-'@
-    EntraDelete = @'
-For a normal Autopilot + Entra joined device you do NOT have to delete the Entra object by hand to release the device, so those rows are skipped by default.
-
-It matters for devices that were never in Autopilot and have to be fully detached from this tenant.
-
-A device that the list still shows in Autopilot - or whose Autopilot removal is not confirmed yet - is looked up in Autopilot first. If the registration is gone (also when someone removed it outside this tool), the device is handled like any other. If it is really still there, it is always skipped, whatever the options say: run step 5 (remove the registration) and step 6 (sync and confirm) first.
-
-Hybrid joined devices (trust type ServerAd) are skipped too: the cloud object comes straight back at the next Entra Connect sync unless the computer object is deleted from the on-prem Active Directory first. Those devices are listed in the final report so you can clean them up there.
-
-Deleting a device object also deletes the BitLocker recovery keys Entra held for it. Export them in step 2 first if there is any chance a disk still has to be unlocked.
-'@
-    FinalCheck = @'
-Re-reads Intune, Windows Autopilot and Entra ID and answers, per device: is it gone from Intune, is the serial number gone from the Autopilot list, what is left in Entra ID, and is there anything still to do on-premises.
-
-A device counts as ready for handover when it is out of Intune and out of Autopilot and needs nothing done in the on-prem Active Directory. An Entra ID object that is still there is normal for an Autopilot device.
-
-The report is written as a CSV plus a readable checklist you can hand to whoever takes the devices over.
-'@
+function Format-BlockedReason {
+    <# the wizard's wording for why the Run button cannot run (Resolve-DCURunPlan .Blocked) #>
+    param([string]$Blocked, [switch]$Long)
+    switch ($Blocked) {
+        'NotSignedIn'     { 'Sign in on the Setup page first' }
+        'EmptyList'       { if ($Long) { 'The device list is empty - add devices on step 1 first.' } else { 'Add devices to the list first' } }
+        'NothingSelected' { if ($Long) { 'Tick at least one device first.' } else { 'Tick at least one device' } }
+        default           { '' }
+    }
 }
 
 # ----------------------------------------------------------------------------
@@ -263,6 +208,8 @@ $wiz = [ordered]@{
     SignIn       = $null
     Dirty        = $false      # device list changed since the last save
     LiveLine     = $null       # the in-place countdown line in the activity feed
+    Bulk         = $false      # ticking many rows at once: summarise once at the end, not per row
+    SettingsError = $null      # the last settings save error, so it is reported once
 }
 
 # ----------------------------------------------------------------------------
@@ -415,14 +362,25 @@ function Update-ModeChrome {
     Update-RunButton
 }
 
+function Get-CurrentPlan {
+    <#
+        What the Run button on this page would do right now (Resolve-DCURunPlan):
+        which devices, the label, whether it may run, and whether it needs a
+        confirmation. $null on the Setup page.
+    #>
+    if ($wiz.Index -lt 1 -or -not $wiz.CurrentKey -or $wiz.CurrentKey -eq '__setup') { return $null }
+    $ticked = foreach ($d in $wiz.Devices) { if ($d.Apply) { $d.Key } }
+    Resolve-DCURunPlan -Step (Get-RunStepKey $wiz.CurrentKey) -Devices @($wiz.Devices) -Selection @($ticked) `
+        -DryRun (Get-DryRun) -SignedIn (Test-SignedIn) -Options (Get-OptionValues)
+}
+
 function Update-StepModeCard {
-    if ($wiz.Index -lt 1 -or -not $wiz.CurrentKey) { $c.StepModeCard.Visibility = 'Collapsed'; return }
-    $meta = $wiz.Catalog | Where-Object Key -eq (Get-RunStepKey $wiz.CurrentKey) | Select-Object -First 1
-    if (-not $meta -or -not $meta.Destructive) { $c.StepModeCard.Visibility = 'Collapsed'; return }
+    $plan = Get-CurrentPlan
+    if (-not $plan -or $plan.Effect -ne 'Destructive') { $c.StepModeCard.Visibility = 'Collapsed'; return }
 
     $c.StepModeCard.Visibility = 'Visible'
-    $n = @($wiz.Devices | Where-Object Apply).Count
-    if (Get-DryRun) {
+    $n = $plan.TargetCount
+    if ($plan.DryRun) {
         $c.StepModeCard.Background  = '#EAF7EE'
         $c.StepModeCard.BorderBrush = '#A7D7B0'
         $c.StepModeTitle.Text       = 'Dry run - this changes nothing'
@@ -437,6 +395,9 @@ function Update-StepModeCard {
         $c.StepModeTitle.Foreground = '#A01A12'
         $c.StepModeText.Foreground  = '#7A2A24'
         $c.StepModeText.Text = "Running this step changes $n device(s) in the tenant, permanently. You will be asked to confirm once more."
+        if ($plan.NotBackedUp) {
+            $c.StepModeText.Text += "  $($plan.NotBackedUp) of them have not been exported in step $((Get-StepMeta 'Backup').Number) yet."
+        }
     }
 }
 
@@ -444,9 +405,9 @@ function Update-StepModeCard {
 # config persistence
 # ----------------------------------------------------------------------------
 function Save-Config {
+    # the shape, the types and the "never the dry run" rule live in the module (Save-DCUSettings)
     try {
-        if (-not (Test-Path $ConfigDir)) { New-Item -ItemType Directory -Path $ConfigDir -Force | Out-Null }
-        [pscustomobject]@{
+        Save-DCUSettings -Path $ConfigPath -Settings @{
             WorkFolder     = $c.WorkFolderBox.Text
             RecentDays     = $c.RecentDaysBox.Text
             WindowsOnly    = [bool]$c.WindowsOnlyCheck.IsChecked
@@ -454,26 +415,34 @@ function Save-Config {
             UseDeviceCode  = [bool]$c.DeviceCodeCheck.IsChecked
             ScopeWipe      = [bool]$c.ScopeWipeCheck.IsChecked
             ScopeBitLocker = [bool]$c.ScopeBitLockerCheck.IsChecked
-        } | ConvertTo-Json | Set-Content -Path $ConfigPath
+        }
+        $wiz.SettingsError = $null
     }
-    catch { }
+    catch {
+        # this runs on every focus change - say it once, not once per click
+        if ($wiz.SettingsError -ne $_.Exception.Message) {
+            $wiz.SettingsError = $_.Exception.Message
+            Add-LogLine ([pscustomobject]@{ Timestamp = Get-Date; Level = 'Warn'; Category = 'Settings'
+                                           Message = "Your settings could not be saved to ${ConfigPath}: $($_.Exception.Message)" })
+        }
+    }
 }
 
 function Load-Config {
-    # NB: the dry-run switch is deliberately NOT restored. Every session starts
-    # safe, whatever the last one was set to.
-    if (-not (Test-Path $ConfigPath)) { return }
-    try {
-        $cfg = Get-Content $ConfigPath -Raw | ConvertFrom-Json
-        if ($cfg.WorkFolder) { $c.WorkFolderBox.Text = $cfg.WorkFolder }
-        if ($cfg.RecentDays) { $c.RecentDaysBox.Text = $cfg.RecentDays }
-        if ($cfg.TenantId)   { $c.TenantBox.Text = $cfg.TenantId }
-        if ($null -ne $cfg.WindowsOnly)    { $c.WindowsOnlyCheck.IsChecked = [bool]$cfg.WindowsOnly }
-        if ($null -ne $cfg.UseDeviceCode)  { $c.DeviceCodeCheck.IsChecked = [bool]$cfg.UseDeviceCode }
-        if ($null -ne $cfg.ScopeWipe)      { $c.ScopeWipeCheck.IsChecked = [bool]$cfg.ScopeWipe }
-        if ($null -ne $cfg.ScopeBitLocker) { $c.ScopeBitLockerCheck.IsChecked = [bool]$cfg.ScopeBitLocker }
+    # Read-DCUSettings never returns the dry-run switch: every session starts
+    # safe, whatever the last one was set to
+    try { $cfg = Read-DCUSettings -Path $ConfigPath }
+    catch {
+        Add-LogLine ([pscustomobject]@{ Timestamp = Get-Date; Level = 'Warn'; Category = 'Settings'; Message = $_.Exception.Message })
+        return
     }
-    catch { }
+    if ($cfg.WorkFolder) { $c.WorkFolderBox.Text = $cfg.WorkFolder }
+    if ($cfg.TenantId)   { $c.TenantBox.Text = $cfg.TenantId }
+    $c.RecentDaysBox.Text              = [string]$cfg.RecentDays
+    $c.WindowsOnlyCheck.IsChecked      = $cfg.WindowsOnly
+    $c.DeviceCodeCheck.IsChecked       = $cfg.UseDeviceCode
+    $c.ScopeWipeCheck.IsChecked        = $cfg.ScopeWipe
+    $c.ScopeBitLockerCheck.IsChecked   = $cfg.ScopeBitLocker
 }
 
 # ----------------------------------------------------------------------------
@@ -486,10 +455,8 @@ function Get-WorkFolder {
 }
 
 function Get-RecentDays {
-    $v = 30
-    if (-not [int]::TryParse([string]$c.RecentDaysBox.Text, [ref]$v)) { $v = 30 }
-    if ($v -lt 0) { $v = 0 }
-    $v
+    # parsed and clamped to what New-DCUSession accepts, the same way the saved setting is
+    (ConvertTo-DCUSettings @{ RecentDays = [string]$c.RecentDaysBox.Text }).RecentDays
 }
 
 function Refresh-Setup {
@@ -542,16 +509,6 @@ function Test-SignedIn { [bool]($wiz.SignIn -and $wiz.SignIn.SignedIn) }
 # ----------------------------------------------------------------------------
 # device list <-> module records
 # ----------------------------------------------------------------------------
-$DeviceFields = @(
-    'Key', 'Raw', 'Name', 'Serial', 'Note', 'Source', 'Match', 'MatchDetail'
-    'IntuneId', 'IntuneName', 'IntuneUser', 'IntuneLastSync', 'IntuneEnrolled', 'IntuneOs'
-    'IntuneModel', 'IntuneOwner', 'IntuneCompliance'
-    'AzureAdDeviceId', 'EntraObjectId', 'EntraName', 'EntraTrust', 'EntraLastSignIn', 'EntraEnabled'
-    'AutopilotId', 'AutopilotGroupTag', 'AutopilotEnrollment', 'AutopilotUser'
-    'LastActivity', 'DaysSinceActivity', 'Warn', 'Flag'
-    'IntuneState', 'AutopilotState', 'EntraState', 'BitLockerState', 'Result', 'Apply'
-)
-
 function ConvertTo-WorkerRows {
     <# plain copies for the worker - it must never touch an object bound to the grid #>
     $out = foreach ($d in $wiz.Devices) {
@@ -575,7 +532,7 @@ function Sync-DeviceRows {
             elseif ($f -in 'Warn', 'Apply')  { $d.$f = [bool]$v.Value }
             else { $d.$f = [string]$v.Value }
         }
-        $d.add_PropertyChanged({ param($s, $e) if ($e.PropertyName -eq 'Apply') { Update-GridSummary } })
+        $d.add_PropertyChanged({ param($s, $e) if ($e.PropertyName -eq 'Apply' -and -not $wiz.Bulk) { Update-GridSummary } })
         $wiz.Devices.Add($d)
     }
     $wiz.Dirty = $true
@@ -601,53 +558,14 @@ function Update-GridSummary {
 }
 
 function Update-RunButton {
-    if ($wiz.Index -lt 1) { return }
-    if (-not $wiz.CurrentKey) { return }
-    $key = Get-RunStepKey $wiz.CurrentKey
-    $meta = $wiz.Catalog | Where-Object Key -eq $key | Select-Object -First 1
+    <# label, colour and enabled state - what the button says is what the plan will do #>
+    $plan = Get-CurrentPlan
+    if (-not $plan) { return }
     $c.StepRunBtn.Visibility = 'Visible'
-
-    $n = if ($key -in $WholeListSteps) { $wiz.Devices.Count }
-         else { @($wiz.Devices | Where-Object Apply).Count }
-
-    $label = switch ($key) {
-        'Lookup'          { "Look up $n device(s)" }
-        'Backup'          { "Export $n device(s)" }
-        'Wipe'            { $m = Get-OptionValue 'Mode' 'Wipe'; "$m $n device(s)" }
-        'IntuneDelete'    { "Delete $n device(s) from Intune" }
-        'AutopilotDelete' { "Remove $n Autopilot registration(s)" }
-        'AutopilotSync'   { $p = @($wiz.Devices | Where-Object AutopilotState -eq 'Deletion pending').Count
-                            # it only syncs when a registration is still there, so the label promises no sync
-                            if ($p) { "Confirm $p Autopilot removal(s)" } else { 'Check for Autopilot removals' } }
-        'EntraDelete'     { "Delete $n Entra ID object(s)" }
-        'FinalCheck'      { "Check $n device(s)" }
-        default           { 'Run this step' }
-    }
-    # the sync is not destructive, but a dry run holds it back all the same
-    if (($meta -and $meta.Destructive -or $key -eq 'AutopilotSync') -and (Get-DryRun)) { $label = "Simulate: $label" }
-    # blue for read-only and dry-run steps, red when this click changes the tenant
-    $c.StepRunBtn.Background = if ($meta -and $meta.Destructive -and -not (Get-DryRun)) { '#C0281F' } else { '#1A56C4' }
-    $c.StepRunBtn.Content = $label
-    $c.StepRunBtn.IsEnabled = (-not $wiz.Running) -and ($n -gt 0) -and (Test-SignedIn)
-    if (-not (Test-SignedIn)) { $c.StepRunBtn.Content = 'Sign in on the Setup page first' }
-    elseif ($n -eq 0) {
-        # a whole-list step has nothing to tick - it is the list itself that is missing
-        $c.StepRunBtn.Content = if ($key -in $WholeListSteps) { 'Add devices to the list first' } else { 'Tick at least one device' }
-    }
-}
-
-function Get-OptionValue {
-    param([string]$Name, $Default)
-    if ($wiz.OptControls.ContainsKey($Name)) {
-        $e = $wiz.OptControls[$Name]
-        switch ($e.Type) {
-            'bool'   { return [bool]$e.Control.IsChecked }
-            'int'    { $v = 0; [void][int]::TryParse($e.Control.Text, [ref]$v); return $v }
-            'choice' { return [string]$e.Control.SelectedItem }
-            default  { return [string]$e.Control.Text }
-        }
-    }
-    $Default
+    # blue for read-only and dry-run steps, red when this click deletes for real
+    $c.StepRunBtn.Background = if ($plan.Effect -eq 'Destructive' -and -not $plan.DryRun) { '#C0281F' } else { '#1A56C4' }
+    $c.StepRunBtn.Content    = if ($plan.CanRun) { $plan.Label } else { Format-BlockedReason $plan.Blocked }
+    $c.StepRunBtn.IsEnabled  = (-not $wiz.Running) -and $plan.CanRun
 }
 
 # ----------------------------------------------------------------------------
@@ -831,14 +749,13 @@ function Build-OptionControls {
     $c.StepOptionsPanel.Children.Clear()
     $c.StepInfoPanel.Children.Clear()
 
-    if ($StepInfo.ContainsKey($Key)) {
-        Add-InfoCard $c.StepInfoPanel 'How this step works' $StepInfo[$Key]
+    $meta = Get-StepMeta $Key
+    if ($meta -and $meta.Explainer) {
+        Add-InfoCard $c.StepInfoPanel 'How this step works' $meta.Explainer
     }
 
     # the device-input step has its own panel of tabs instead of generic fields
     if ($Key -eq 'DeviceInput') { return }
-
-    $meta = $wiz.Catalog | Where-Object Key -eq $Key | Select-Object -First 1
     if (-not $meta) { return }
 
     # the working folder is the default for both export folders
@@ -904,6 +821,7 @@ function Show-Result {
         if ($p.Name -in 'Failed', 'NotFound', 'NotReady', 'BitLockerErrors' -and "$val" -match '^\d+$' -and [int]"$val" -gt 0) { $col = '#C0281F' }
         if ($p.Name -in 'RecentlyActive', 'HybridJoined', 'Warned', 'NeedsOnPremAd', 'StillPending' -and "$val" -match '^\d+$' -and [int]"$val" -gt 0) { $col = '#A25A00' }
         if ($p.Name -eq 'DryRun') { $col = if ([bool]$val) { '#1A56C4' } else { '#A01A12' } }
+        if ($p.Name -eq 'WorkingSetError') { $col = '#C0281F' }
         Add-KV $sp $p.Name "$val" $col
     }
 
@@ -982,7 +900,7 @@ function Build-StepPage {
     $row = $wiz.Steps[$Index]
     $wiz.CurrentKey = $row.Key
     $c.StepTitle.Text = "$($row.Number)   $($row.Name)"
-    $c.StepDesc.Text  = [string]$StepDesc[$row.Key]
+    $c.StepDesc.Text  = [string](Get-StepMeta $row.Key).Summary
     $c.StepActivityList.Items.Clear()
     $c.StepResultPanel.Children.Clear()
 
@@ -1040,23 +958,22 @@ function Navigate {
 
 function Get-NavLimit {
     <#
-        How far forward the wizard may go right now, and why not further:
-        Setup until signed in, page 1 until every device on the list has been
-        looked up. Every later step works on the lookup results - a delete run
-        against a list nobody has checked is the mistake this tool exists to
-        prevent.
+        How far forward the wizard may go right now, and why not further, as
+        a page index. The rule itself (sign in, then build and look up the
+        list, then the rest) is Get-DCUNavigationGate's; this only maps its
+        last reachable step onto the rail, where page 1 carries two steps.
     #>
-    if (-not (Test-SignedIn)) {
-        return @{ Max = 0; Reason = 'Sign in first - nothing can be looked up or deleted until you do.' }
+    $gate = Get-DCUNavigationGate -Devices @($wiz.Devices) -SignedIn (Test-SignedIn)
+    $max = 0
+    if ($gate.LastReachable) {
+        $limit = @($wiz.Catalog.Key).IndexOf($gate.LastReachable)
+        for ($i = 1; $i -lt $wiz.Steps.Count; $i++) {
+            $pageStep = @($wiz.Catalog.Key).IndexOf($wiz.Steps[$i].Key)
+            $runStep  = @($wiz.Catalog.Key).IndexOf((Get-RunStepKey $wiz.Steps[$i].Key))
+            if ([math]::Max($pageStep, $runStep) -le $limit) { $max = $i }
+        }
     }
-    $pageOne = 0
-    for ($i = 0; $i -lt $wiz.Steps.Count; $i++) { if ($wiz.Steps[$i].Key -eq $MergedPageKey) { $pageOne = $i } }
-    $total   = $wiz.Devices.Count
-    # same test Get-DCUStatus uses for "looked up"
-    $pending = @($wiz.Devices | Where-Object { $_.Match -eq 'Not looked up' }).Count
-    if (-not $total) { return @{ Max = $pageOne; Reason = 'Put the devices on the list and look them up first.' } }
-    if ($pending)    { return @{ Max = $pageOne; Reason = "Look up the devices first - $pending of $total not looked up yet." } }
-    @{ Max = $wiz.Steps.Count - 1; Reason = '' }
+    @{ Max = $max; Reason = $gate.Reason }
 }
 
 function Update-NavButtons {
@@ -1138,12 +1055,10 @@ $worker = {
                 $Queue.Enqueue([pscustomobject]@{ Kind = 'saved'; Payload = $path })
             }
             'step' {
-                $fn = "Invoke-DCU$StepKey"
-                $callArgs = @{ Session = $session; Devices = @($Devices) }
-                if (@($Selection).Count) { $callArgs.Selection = @($Selection) }
-                $summary = & $fn @callArgs
-                # keep the on-disk list in step with what just happened
-                try { Save-DCUWorkingSet -Devices @($summary.Rows) -Session $session | Out-Null } catch { }
+                # Invoke-DCUStep re-plans the run, refuses a destructive one whose
+                # confirmation does not match, and saves workingset.json after it
+                $summary = Invoke-DCUStep -Step $StepKey -Session $session -Devices @($Devices) `
+                    -Selection @($Selection) -ConfirmationKey ([string]$Extra.ConfirmationKey)
                 $Queue.Enqueue([pscustomobject]@{ Kind = 'done'; Payload = $summary })
             }
         }
@@ -1203,46 +1118,36 @@ function Start-Run {
 
 function Start-StepRun {
     <#
-        The Run button. A destructive step outside a dry run asks once more,
-        and says out loud how many of the ticked devices are flagged.
+        The Run button. The plan (Resolve-DCURunPlan) decides which devices
+        the run acts on and whether it needs a confirmation; a destructive
+        step outside a dry run asks once more, names the flagged devices and
+        says how many were never exported. Only a yes hands the run the
+        plan's ConfirmationKey - without it Invoke-DCUStep refuses to start.
     #>
-    if ($wiz.Index -lt 1) { return }
-    $key = Get-RunStepKey $wiz.Steps[$wiz.Index].Key
+    $plan = Get-CurrentPlan
+    if (-not $plan) { return }
+    if (-not $plan.CanRun) { Set-Status (Format-BlockedReason $plan.Blocked -Long); return }
 
-    $wholeList = $key -in $WholeListSteps
-    $ticked = if ($wholeList) { @($wiz.Devices) } else { @($wiz.Devices | Where-Object Apply) }
-    if (-not $ticked.Count) {
-        Set-Status $(if ($wholeList) { 'The device list is empty - add devices on step 1 first.' } else { 'Tick at least one device first.' })
-        return
-    }
-
-    $meta = $wiz.Catalog | Where-Object Key -eq $key | Select-Object -First 1
-    if ($meta -and $meta.Destructive -and -not (Get-DryRun) -and $env:DCU_WIZARD_SELFTEST -ne '1') {
-        $warned = @($ticked | Where-Object Warn)
-        $what = switch ($key) {
-            'Wipe'            { "send a $(Get-OptionValue 'Mode' 'Wipe') to" }
-            'IntuneDelete'    { 'delete from Intune' }
-            'AutopilotDelete' { 'remove the Autopilot registration of' }
-            'EntraDelete'     { 'delete the Entra ID device object of' }
-            default           { 'change' }
+    if ($plan.RequiresConfirmation -and $env:DCU_WIZARD_SELFTEST -ne '1') {
+        $flagged = @($plan.Flagged)
+        $msg = "About to $($plan.ConfirmAction) $($plan.TargetCount) device(s) in $($wiz.SignIn.TenantDomain).`n`nThis runs for real and cannot be undone."
+        if ($flagged.Count) {
+            $msg += "`n`n$($flagged.Count) of them are FLAGGED:"
+            foreach ($w in ($flagged | Select-Object -First 12)) { $msg += "`n  - $($w.Label)  ($($w.Flag))" }
+            if ($flagged.Count -gt 12) { $msg += "`n  ... and $($flagged.Count - 12) more" }
         }
-        $msg = "About to $what $($ticked.Count) device(s) in $($wiz.SignIn.TenantDomain).`n`nThis runs for real and cannot be undone."
-        if ($warned.Count) {
-            $msg += "`n`n$($warned.Count) of them are FLAGGED:"
-            foreach ($w in ($warned | Select-Object -First 12)) { $msg += "`n  - $($w.Display)  ($($w.Flag))" }
-            if ($warned.Count -gt 12) { $msg += "`n  ... and $($warned.Count - 12) more" }
+        if ($plan.NotBackedUp) {
+            $msg += "`n`n$($plan.NotBackedUp) of them were never exported in step $((Get-StepMeta 'Backup').Number) - their ids cannot be looked up once they are gone."
         }
         $msg += "`n`nContinue?"
-        $icon = if ($warned.Count) { [System.Windows.MessageBoxImage]::Warning } else { [System.Windows.MessageBoxImage]::Question }
+        $icon = if ($flagged.Count -or $plan.NotBackedUp) { [System.Windows.MessageBoxImage]::Warning } else { [System.Windows.MessageBoxImage]::Question }
         $ans = [System.Windows.MessageBox]::Show($msg, 'Device CleanUpper - this cannot be undone',
             [System.Windows.MessageBoxButton]::YesNo, $icon, [System.Windows.MessageBoxResult]::No)
         if ($ans -ne [System.Windows.MessageBoxResult]::Yes) { Set-Status 'Cancelled - nothing was changed.'; return }
     }
-
-    $verb = if ($meta -and $meta.Destructive -and (Get-DryRun)) { 'Simulating' } else { 'Running' }
-    $selection = if ($wholeList) { @() } else { @($ticked | ForEach-Object Key) }
-    Start-Run -Operation 'step' -StepKey $key -Selection $selection `
-        -Status "$verb $($wiz.Steps[$wiz.Index].Name) on $($ticked.Count) device(s)..."
+    $verb = if ($plan.Effect -ne 'ReadOnly' -and $plan.DryRun) { 'Simulating' } else { 'Running' }
+    Start-Run -Operation 'step' -StepKey $plan.Step -Selection $plan.Targets -Extra @{ ConfirmationKey = $plan.ConfirmationKey } `
+        -Status "$verb $($wiz.Steps[$wiz.Index].Name) on $($plan.TargetCount) device(s)..."
 }
 
 # ----------------------------------------------------------------------------
@@ -1272,10 +1177,16 @@ $timer.Add_Tick({
                 }
                 else {
                     Show-Result $p $wiz.CurrentKey
-                    # the worker writes workingset.json after every step, so the
-                    # list on disk is current again
-                    $wiz.Dirty = $false
-                    Set-Status 'Done.'
+                    # Invoke-DCUStep writes workingset.json after every step - the
+                    # list on disk is only current again if that save went through
+                    if ($p.PSObject.Properties['WorkingSetError']) {
+                        $wiz.Dirty = $true
+                        Set-Status 'Done - but the list could not be saved. Save it on page 1 before you close.'
+                    }
+                    else {
+                        $wiz.Dirty = $false
+                        Set-Status 'Done.'
+                    }
                 }
             }
             'cancelled' { Set-Status 'Cancelled.'; Add-StepActivity ([pscustomobject]@{ Timestamp = Get-Date; Level = 'Warn'; Message = 'Cancelled by user.' }) }
@@ -1428,12 +1339,22 @@ function Start-DeviceInput {
 }
 
 # ---- grid ----
-$c.GridAllBtn.Add_Click({ foreach ($d in $wiz.Devices) { $d.Apply = $true }; Update-GridSummary })
-$c.GridNoneBtn.Add_Click({ foreach ($d in $wiz.Devices) { $d.Apply = $false }; Update-GridSummary })
-$c.GridSafeBtn.Add_Click({
-    foreach ($d in $wiz.Devices) { $d.Apply = (-not $d.Warn) -and ($d.Match -ne 'Not found') }
+function Set-AllTicks {
+    <# tick rows in one go - one summary at the end instead of one per row #>
+    param([scriptblock]$Rule)
+    $wiz.Bulk = $true
+    try { foreach ($d in $wiz.Devices) { $d.Apply = [bool](& $Rule $d) } }
+    finally { $wiz.Bulk = $false }
     Update-GridSummary
-    Set-Status 'Ticked every device that was found and is not flagged.'
+}
+$c.GridAllBtn.Add_Click({ Set-AllTicks { $true } })
+$c.GridNoneBtn.Add_Click({ Set-AllTicks { $false } })
+$c.GridSafeBtn.Add_Click({
+    # "safe" is the module's definition - the same rows the lookup pre-ticks
+    $safe = @{}
+    foreach ($k in Get-DCUSafeSelection -Devices @($wiz.Devices)) { $safe[$k] = $true }
+    Set-AllTicks { param($d) $safe.ContainsKey($d.Key) }
+    Set-Status 'Ticked every device that was looked up, found and is not flagged.'
 })
 $c.GridRemoveBtn.Add_Click({
     $gone = @($wiz.Devices | Where-Object Apply)
@@ -1462,6 +1383,7 @@ $c.CloseBtn.Add_Click({ $window.Close() })
 $window.Add_ContentRendered({ Update-NavButtons })   # the rail items exist from here on
 
 $window.Add_Closing({
+    param($s, $closing)   # $closing, not $_: inside a catch block $_ is the error
     if ($wiz.Running) {
         $r = [System.Windows.MessageBox]::Show('A step is running. Cancel and close?', 'Device CleanUpper', 'YesNo', 'Warning')
         if ($r -ne 'Yes') { $_.Cancel = $true; return }
@@ -1477,7 +1399,13 @@ $window.Add_Closing({
                 $sa = Build-SessionArgs
                 Save-DCUWorkingSet -Devices (ConvertTo-WorkerRows) -Path (Join-Path (Get-WorkFolder) 'workingset.json') -Session (New-DCUSession @sa) | Out-Null
             }
-            catch { }
+            catch {
+                # they asked for it to be saved - closing anyway must be their call
+                $again = [System.Windows.MessageBox]::Show(
+                    "The list could NOT be saved:`n`n$($_.Exception.Message)`n`nClose anyway and lose the changes?",
+                    'Save failed', [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Error, [System.Windows.MessageBoxResult]::No)
+                if ($again -ne [System.Windows.MessageBoxResult]::Yes) { $closing.Cancel = $true; return }
+            }
         }
     }
     $wiz.Timer.Stop()

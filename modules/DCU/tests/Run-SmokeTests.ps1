@@ -52,10 +52,15 @@ function FakeStep {
         the sign-in check replaced. Every call is recorded as "METHOD uri"; a
         GET for an id in -Gone answers like a 404 (the helper returns $null),
         every other call succeeds.
+
+        -ViaInvokeStep goes through Invoke-DCUStep (the plan, the confirmation
+        check and the working-set save) instead of calling the step directly;
+        -Selection, -ConfirmationKey and -DryRun are passed on to it.
     #>
-    param([string]$Step, [object[]]$Rows, [hashtable]$StepOptions = @{}, [string[]]$Gone = @())
+    param([string]$Step, [object[]]$Rows, [hashtable]$StepOptions = @{}, [string[]]$Gone = @(),
+          [switch]$ViaInvokeStep, [string[]]$Selection = @(), [string]$ConfirmationKey, [bool]$DryRun = $false)
     & $mod {
-        param($step, $rows, $work, $opts, $gone)
+        param($step, $rows, $work, $opts, $gone, $via, $sel, $key, $dry)
         $saved = @{ Graph = ${function:Invoke-DCUGraph}; Auth = ${function:Assert-DCUSignedIn} }
         $script:fakeCalls = [System.Collections.Generic.List[string]]::new()
         $script:fakeGone  = @($gone)
@@ -67,15 +72,22 @@ function FakeStep {
                 [pscustomobject]@{ id = 'fake' }
             }
             ${function:script:Assert-DCUSignedIn} = { [pscustomobject]@{ SignedIn = $true } }
-            $session = New-DCUSession -WorkFolder $work -DryRun:$false -StepOptions $opts
-            $res = & "Invoke-DCU$step" -Session $session -Devices $rows
+            $session = New-DCUSession -WorkFolder $work -DryRun:$dry -StepOptions $opts
+            $res = if ($via) { Invoke-DCUStep -Step $step -Session $session -Devices $rows -Selection $sel -ConfirmationKey $key }
+                   else { & "Invoke-DCU$step" -Session $session -Devices $rows }
             [pscustomobject]@{ Res = $res; Calls = @($script:fakeCalls) }
         }
         finally {
             ${function:script:Invoke-DCUGraph}    = $saved.Graph
             ${function:script:Assert-DCUSignedIn} = $saved.Auth
         }
-    } $Step $Rows $tmp $StepOptions $Gone
+    } $Step $Rows $tmp $StepOptions $Gone ([bool]$ViaInvokeStep) $Selection $ConfirmationKey $DryRun
+}
+
+function Get-ThrownMessage {
+    <# run a block, return the error message it threw ('' when it did not) #>
+    param([scriptblock]$Block)
+    try { & $Block | Out-Null; '' } catch { $_.Exception.Message }
 }
 
 # --- fixture inventories ----------------------------------------------------
@@ -496,6 +508,9 @@ try {
         try { Import-DCUSpreadsheet -Path (Join-Path $tmp 'devices.xlsx') -Sheet 'Nope' | Out-Null; $false }
         catch { $_.Exception.Message -like '*not found*' }
     }
+
+    # navigation gating, run plans, confirmation, settings, drift between copies
+    . (Join-Path $PSScriptRoot 'WorkflowChecks.ps1')
 }
 finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
