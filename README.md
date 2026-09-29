@@ -11,8 +11,9 @@ department with its own tenant. It removes the devices from **Intune**, from
 avoids stuck enrollments, and proves at the end that the serial numbers are
 really released.
 
-A **wizard** (`Launch.cmd`) for doing it by hand and a **command line**
-(`Invoke-DeviceCleanup.ps1`) for scripting it, both on one PowerShell module.
+A **wizard** (`Launch.cmd`) for doing it by hand, the same in your **browser**
+(`Launch-Web.cmd`, runs on your own computer only), and a **command line**
+(`Invoke-DeviceCleanup.ps1`) for scripting it - all on one PowerShell module.
 
 > **Deleting a Windows Autopilot registration cannot be undone** - the device
 > has to be re-registered from its hardware hash. Every run is a dry run until
@@ -150,8 +151,12 @@ numbered sections with an arrow between them. Half ➊ (put the devices on the
 list) is where you work first; half ➋ (look them up in the tenant) is greyed out,
 badge and all, until the list is not empty.
 
-Running a destructive step outside a dry run asks for confirmation once, and
-names the flagged devices in the prompt.
+Running a destructive step outside a dry run asks for confirmation once,
+names the flagged devices in the prompt, and says how many were never
+exported in step 2. From **10 devices** on, you also type the tenant's domain
+(`contoso.onmicrosoft.com`) - a yes/no is easy to click through, and a typed
+name also catches "signed in to the wrong tenant". The typed name is checked
+against the tenant you are actually signed in to.
 
 The working folder (default `Documents\DeviceCleanUpper`) holds:
 
@@ -162,6 +167,34 @@ exports\bitlocker-keys-<stamp>.csv  only if you asked for it
 exports\handover-<stamp>.csv|.txt   the final report and checklist
 logs\devicecleanupper-<date>.log    every line this tool logged, appended live
 ```
+
+If that log cannot be written (the folder moved, OneDrive in the way, no
+permission, disk full), the lines go to `%LOCALAPPDATA%\DeviceCleanUpper\logs`
+instead and you are told once. If neither can be written, dry runs still work
+but nothing that changes the tenant runs - a real run always leaves a record.
+
+## In your browser
+
+```
+Launch-Web.cmd
+```
+
+The same steps, rules and sign-in as the wizard, in a browser tab. It is not a
+website: a PowerShell window starts a small server on `127.0.0.1` - this
+computer only, nothing listens on the network - and opens the page with a
+one-time key in the link. Keep that window open while you work; **Quit** in
+the page (or Ctrl+C in the window) stops it.
+
+* one mode switch in the top bar - **Dry run** or **LIVE** - instead of three;
+* each step shows, above its button, what the button will do in words
+  ("Delete 12 device(s) from Intune - 2 flagged - 3 not exported");
+* the device table filters on Safe / Flagged / Not found / Autopilot pending;
+* the list is saved to `workingset.json` after every change, and a list that
+  is replaced or shortened is kept as `workingset-before-<stamp>.json` first.
+
+Sign-in is delegated as in the wizard: the Microsoft sign-in window opens next
+to the page. The CLI and the wizard stay; the browser version will replace the
+wizard once it has had some real use.
 
 ## The command line
 
@@ -198,6 +231,7 @@ Useful switches:
 | Switch | Meaning |
 |---|---|
 | `-Execute` | run for real; without it everything is simulated |
+| `-ConfirmTenant contoso.onmicrosoft.com` | needed with `-Execute` when a destructive step acts on 10 or more devices; must be the tenant you sign in to |
 | `-RecentDays 7` | change the "still in use" threshold; `0` turns the warning off |
 | `-Selection S:5CD1234ABC,...` | act on these device keys only |
 | `-IncludeWarned` | act on the flagged devices too (they are left out by default) |

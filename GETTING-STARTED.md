@@ -51,7 +51,9 @@ registration can only be put back with the device's hardware hash.
 
 ## Round 1 - dry run (changes nothing)
 
-Start **`Launch.cmd`** (double-click).
+Start **`Launch.cmd`** (double-click). Rather work in your browser? Start
+**`Launch-Web.cmd`** instead - the same steps in a browser tab, on your own
+computer only; keep its PowerShell window open while you work.
 
 | # | Do | You should see |
 |---|----|-------|
